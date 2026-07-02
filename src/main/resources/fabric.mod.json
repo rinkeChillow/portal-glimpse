@@ -1,32 +1,32 @@
 {
 	"schemaVersion": 1,
-	"id": "portalglimps",
+	"id": "portal-glimpse",
 	"version": "${version}",
-	"name": "Portal Glimps",
-	"description": "This is an example description! Tell everyone what your mod is about!",
+	"name": "Portal Glimpse",
+	"description": "Catch a glimpse of the other side. Nether portals show a view of where they lead — captured from your own travels. Fully client-side.",
 	"authors": [
 		"rinke_"
 	],
 	"contact": {
-		"homepage": "https://modrinth.com/user/rinke",
-		"sources": "https://modrinth.com/mod/portal-glimps"
+		"homepage": "https://modrinth.com/mod/portal-glimpse",
+		"sources": "https://modrinth.com/mod/portal-glimpse"
 	},
-	"license": "CC0-1.0",
-	"icon": "assets/portalglimps/icon.png",
-	"environment": "*",
+	"license": "ARR",
+	"icon": "assets/portal-glimpse/icon.png",
+	"environment": "client",
 	"entrypoints": {
 		"main": [
-			"com.rinke.portalglimps.PortalGlimps"
+			"com.rinke.portalglimpse.PortalGlimpse"
 		],
 		"fabric-datagen": [
-			"com.rinke.portalglimps.PortalGlimpsDataGenerator"
+			"com.rinke.portalglimpse.PortalGlimpseDataGenerator"
 		],
-        "client": [
-          "com.rinke.portalglimps.PortalGlimpsClient"
-        ]
+		"client": [
+			"com.rinke.portalglimpse.PortalGlimpseClient"
+		]
 	},
 	"mixins": [
-		"portalglimps.mixins.json"
+		"portalglimpse.mixins.json"
 	],
 	"depends": {
 		"fabricloader": ">=0.19.3",
