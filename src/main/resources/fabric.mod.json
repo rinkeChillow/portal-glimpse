@@ -1,0 +1,37 @@
+{
+	"schemaVersion": 1,
+	"id": "portalglimps",
+	"version": "${version}",
+	"name": "Portal Glimps",
+	"description": "This is an example description! Tell everyone what your mod is about!",
+	"authors": [
+		"rinke_"
+	],
+	"contact": {
+		"homepage": "https://modrinth.com/user/rinke",
+		"sources": "https://modrinth.com/mod/portal-glimps"
+	},
+	"license": "CC0-1.0",
+	"icon": "assets/portalglimps/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"com.rinke.portalglimps.PortalGlimps"
+		],
+		"fabric-datagen": [
+			"com.rinke.portalglimps.PortalGlimpsDataGenerator"
+		],
+        "client": [
+          "com.rinke.portalglimps.PortalGlimpsClient"
+        ]
+	},
+	"mixins": [
+		"portalglimps.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~1.21",
+		"java": ">=21",
+		"fabric-api": "*"
+	}
+}
