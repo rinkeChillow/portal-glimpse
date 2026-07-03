@@ -23,13 +23,17 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 
 /**
- * The capture pipeline (design doc §3.2 / §3.4): earn a glimpse by taking a 6-face cubemap of the
- * (ghosted) surroundings and storing it on the portal record.
+ * The capture pipeline (design doc §3.2 / §3.4): earn a glimpse by rendering a 6-face cubemap and
+ * two postcards of the (ghosted) surroundings.
  *
- * <p>This first cut is the <em>manual</em> capture, driven by a debug key: it ghosts the target
- * portal, waits a few ticks for the chunk mesh to rebuild, then reuses vanilla
- * {@link MinecraftClient#takePanorama} to render + save the six faces, un-ghosts, and marks the
- * record's automatic slot. The loading-screen-hold auto-capture on travel comes later.
+ * <p>Every capture originates at the <em>camera portal's</em> geometric center — width, height and
+ * depth — with a world-aligned panorama orientation (face 0 = south, always), so cubemaps are
+ * deterministic per portal regardless of how the player arrived. The images can be stored under a
+ * <em>different</em> record: travel captures shoot at the destination portal but belong to the
+ * origin portal (§3.2 "displayed on the origin portal").
+ *
+ * <p>Flow per request: ghost the camera portal → wait a few ticks for chunk re-mesh → render all
+ * shots → un-ghost → mark the save-record's auto slot → notify the requester.
  */
 public final class CaptureManager {
 
@@ -49,7 +53,9 @@ public final class CaptureManager {
 
 	private static Phase phase = Phase.IDLE;
 	private static int ticksLeft;
-	private static PortalRecord target;
+	private static PortalRecord cameraPortal;
+	private static PortalRecord saveTo;
+	private static Runnable onFinished;
 
 	private CaptureManager() {
 	}
@@ -64,9 +70,6 @@ public final class CaptureManager {
 
 	/** Debug-key entry: capture the nearest registered portal in the current dimension. */
 	public static void requestCaptureNearest(MinecraftClient client) {
-		if (phase != Phase.IDLE) {
-			return;
-		}
 		PortalStore store = PortalDetection.store();
 		ClientPlayerEntity player = client.player;
 		ClientWorld world = client.world;
@@ -79,15 +82,28 @@ public final class CaptureManager {
 			feedback(client, "Capture: no registered portal nearby", Formatting.RED);
 			return;
 		}
-		begin(client, nearest);
+		request(client, nearest, nearest, null);
 	}
 
-	private static void begin(MinecraftClient client, PortalRecord record) {
-		target = record;
-		GhostController.activate(client, record); // ghost + targeted chunk rebuild
+	/**
+	 * Start a capture: camera at {@code camera}'s center, images stored under {@code save}'s record.
+	 * {@code whenDone} runs on the client thread after the capture finishes or fails.
+	 *
+	 * @return false if a capture is already in progress (the request is dropped).
+	 */
+	public static boolean request(MinecraftClient client, PortalRecord camera, PortalRecord save,
+			Runnable whenDone) {
+		if (phase != Phase.IDLE) {
+			return false;
+		}
+		cameraPortal = camera;
+		saveTo = save;
+		onFinished = whenDone;
+		GhostController.activate(client, camera); // ghost + targeted chunk rebuild
 		phase = Phase.SETTLING;
 		ticksLeft = GHOST_SETTLE_TICKS;
 		feedback(client, "Capturing portal…", Formatting.LIGHT_PURPLE);
+		return true;
 	}
 
 	private static void onTick(MinecraftClient client) {
@@ -97,45 +113,50 @@ public final class CaptureManager {
 		if (--ticksLeft > 0) {
 			return;
 		}
+		Runnable callback = onFinished;
 		try {
-			performCapture(client, target);
+			performCapture(client, cameraPortal, saveTo);
 		} catch (Exception e) {
 			PortalGlimpse.LOGGER.warn("Portal Glimpse: capture failed", e);
 			feedback(client, "Capture failed — check logs", Formatting.RED);
 		} finally {
-			GhostController.deactivate(client); // un-ghost while GhostState is still active for the render
+			GhostController.deactivate(client);
 			phase = Phase.IDLE;
-			target = null;
+			cameraPortal = null;
+			saveTo = null;
+			onFinished = null;
+			if (callback != null) {
+				callback.run();
+			}
 		}
 	}
 
-	private static void performCapture(MinecraftClient client, PortalRecord record) throws Exception {
+	private static void performCapture(MinecraftClient client, PortalRecord camera, PortalRecord save)
+			throws Exception {
 		PortalStore store = PortalDetection.store();
 		ClientPlayerEntity player = client.player;
 		if (store == null || player == null) {
 			return;
 		}
-		Path dir = store.baseDir().resolve(record.id.toString());
+		Path dir = store.baseDir().resolve(save.id.toString());
+		Vec3d center = portalCenter(camera);
 
 		List<CaptureRenderer.Shot> shots = new ArrayList<>();
 
-		// The panorama: 6 cubemap faces from the player's eyes, same face order/orientation as
-		// vanilla takePanorama (0=view yaw, 1=+90°, 2=+180°, 3=-90°, 4=up, 5=down).
-		Vec3d eye = player.getEyePos();
-		float yaw = player.getYaw();
-		shots.add(new CaptureRenderer.Shot(eye, yaw, 0.0F, "panorama_0.png"));
-		shots.add(new CaptureRenderer.Shot(eye, yaw + 90.0F, 0.0F, "panorama_1.png"));
-		shots.add(new CaptureRenderer.Shot(eye, yaw + 180.0F, 0.0F, "panorama_2.png"));
-		shots.add(new CaptureRenderer.Shot(eye, yaw - 90.0F, 0.0F, "panorama_3.png"));
-		shots.add(new CaptureRenderer.Shot(eye, yaw, -90.0F, "panorama_4.png"));
-		shots.add(new CaptureRenderer.Shot(eye, yaw, 90.0F, "panorama_5.png"));
+		// The panorama: 6 cubemap faces from the portal's center, world-aligned so the cubemap is
+		// deterministic per portal (0=south, 1=west, 2=north, 3=east, 4=up, 5=down).
+		shots.add(new CaptureRenderer.Shot(center, 0.0F, 0.0F, "panorama_0.png"));
+		shots.add(new CaptureRenderer.Shot(center, 90.0F, 0.0F, "panorama_1.png"));
+		shots.add(new CaptureRenderer.Shot(center, 180.0F, 0.0F, "panorama_2.png"));
+		shots.add(new CaptureRenderer.Shot(center, 270.0F, 0.0F, "panorama_3.png"));
+		shots.add(new CaptureRenderer.Shot(center, 0.0F, -90.0F, "panorama_4.png"));
+		shots.add(new CaptureRenderer.Shot(center, 0.0F, 90.0F, "panorama_5.png"));
 
 		// The postcards: camera hops 2 blocks out on each side of the portal plane and shoots
 		// through the (ghosted) portal. Named for the side the camera stands on — the face the
 		// postcard will be displayed on. Axis X portal spans east-west → faces north/south;
 		// axis Z spans north-south → faces east/west. (MC yaw: 0=south, 90=west, 180=north, -90=east.)
-		Vec3d center = portalCenter(record);
-		if (record.axis == Direction.Axis.X) {
+		if (camera.axis == Direction.Axis.X) {
 			shots.add(new CaptureRenderer.Shot(center.add(0, 0, -POSTCARD_DISTANCE), 0.0F, 0.0F,
 					"postcard_north.png"));
 			shots.add(new CaptureRenderer.Shot(center.add(0, 0, POSTCARD_DISTANCE), 180.0F, 0.0F,
@@ -147,18 +168,29 @@ public final class CaptureManager {
 					"postcard_east.png"));
 		}
 
-		CaptureRenderer.capture(client, dir, CAPTURE_RESOLUTION, shots);
+		// Suppress the portal-nausea screen wobble for the shots — right after travel the effect
+		// is at full strength and would warp every capture.
+		float nausea = player.nauseaIntensity;
+		float prevNausea = player.prevNauseaIntensity;
+		player.nauseaIntensity = 0.0F;
+		player.prevNauseaIntensity = 0.0F;
+		try {
+			CaptureRenderer.capture(client, dir, CAPTURE_RESOLUTION, shots);
+		} finally {
+			player.nauseaIntensity = nausea;
+			player.prevNauseaIntensity = prevNausea;
+		}
 
-		record.auto.hasCapture = true;
-		record.auto.timestamp = System.currentTimeMillis();
-		store.save(record);
+		save.auto.hasCapture = true;
+		save.auto.timestamp = System.currentTimeMillis();
+		store.save(save);
 
-		PortalGlimpse.LOGGER.info("Portal Glimpse: captured panorama + postcards for {} -> {}", record.id, dir);
+		PortalGlimpse.LOGGER.info("Portal Glimpse: captured glimpse (camera {} -> record {})", camera.id, save.id);
 		feedback(client, "Portal captured — panorama + postcards saved", Formatting.GREEN);
 	}
 
-	/** Geometric center of the portal's interior blocks. */
-	private static Vec3d portalCenter(PortalRecord record) {
+	/** Geometric center of the portal's interior blocks — width, height and depth (§3.2). */
+	public static Vec3d portalCenter(PortalRecord record) {
 		int minX = Integer.MAX_VALUE;
 		int minY = Integer.MAX_VALUE;
 		int minZ = Integer.MAX_VALUE;

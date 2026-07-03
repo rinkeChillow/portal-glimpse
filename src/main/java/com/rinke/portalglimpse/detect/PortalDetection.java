@@ -74,17 +74,21 @@ public final class PortalDetection {
 
 	/** Periodically re-scan chunks around the player so newly-lit portals are caught promptly. */
 	private static void onClientTick(MinecraftClient client) {
+		if (++tickCounter < SCAN_INTERVAL_TICKS) {
+			return;
+		}
+		tickCounter = 0;
+		scanAroundPlayer(client);
+	}
+
+	/** Immediately scan the chunks around the player. Also used by travel capture on arrival. */
+	public static void scanAroundPlayer(MinecraftClient client) {
 		PortalStore current = store;
 		ClientWorld world = client.world;
 		ClientPlayerEntity player = client.player;
 		if (current == null || world == null || player == null) {
 			return;
 		}
-		if (++tickCounter < SCAN_INTERVAL_TICKS) {
-			return;
-		}
-		tickCounter = 0;
-
 		ChunkPos center = player.getChunkPos();
 		for (int dx = -SCAN_RADIUS_CHUNKS; dx <= SCAN_RADIUS_CHUNKS; dx++) {
 			for (int dz = -SCAN_RADIUS_CHUNKS; dz <= SCAN_RADIUS_CHUNKS; dz++) {

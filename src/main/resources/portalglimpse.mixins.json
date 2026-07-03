@@ -6,7 +6,9 @@
 	"client": [
 		"BillboardParticleMixin",
 		"CameraMixin",
-		"ChunkRendererRegionMixin"
+		"ChunkRendererRegionMixin",
+		"DownloadingTerrainScreenAccessor",
+		"DownloadingTerrainScreenMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

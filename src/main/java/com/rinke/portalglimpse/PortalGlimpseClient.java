@@ -4,6 +4,7 @@ import com.rinke.portalglimpse.capture.CaptureKeybinding;
 import com.rinke.portalglimpse.capture.CaptureManager;
 import com.rinke.portalglimpse.detect.PortalDetection;
 import com.rinke.portalglimpse.render.GlimpseRenderers;
+import com.rinke.portalglimpse.travel.TravelTracker;
 
 import net.fabricmc.api.ClientModInitializer;
 
@@ -21,6 +22,9 @@ public class PortalGlimpseClient implements ClientModInitializer {
 		// Capture pipeline (§3.2/§3.4): the debug key ghosts a portal and takes its cubemap glimpse.
 		CaptureManager.register();
 		CaptureKeybinding.register();
+
+		// Automatic glimpse on portal travel, behind the held loading screen (§3.2).
+		TravelTracker.register();
 
 		PortalGlimpse.LOGGER.info("Portal Glimpse client ready — glimpse renderer: {}",
 				GlimpseRenderers.get().name());

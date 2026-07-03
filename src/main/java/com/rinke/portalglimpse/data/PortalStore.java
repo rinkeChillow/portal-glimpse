@@ -3,10 +3,8 @@ package com.rinke.portalglimpse.data;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 
 import com.rinke.portalglimpse.PortalGlimpse;
@@ -26,8 +24,8 @@ public class PortalStore {
 	private final Path baseDir;
 	private final Map<UUID, PortalRecord> records = new HashMap<>();
 
-	/** Every interior block position already claimed by a known portal, for fast dedup during scans. */
-	private final Set<Long> claimedPositions = new HashSet<>();
+	/** Interior block position → owning record, for fast dedup during scans and exact lookups. */
+	private final Map<Long, PortalRecord> positionIndex = new HashMap<>();
 
 	private PortalStore(Path baseDir) {
 		this.baseDir = baseDir;
@@ -37,9 +35,7 @@ public class PortalStore {
 		PortalStore store = new PortalStore(baseDir);
 		for (PortalRecord record : PortalStorage.loadAll(baseDir)) {
 			store.records.put(record.id, record);
-			for (BlockPos pos : record.interior) {
-				store.claimedPositions.add(pos.asLong());
-			}
+			store.claim(record.interior, record);
 		}
 		PortalGlimpse.LOGGER.info("Portal Glimpse: loaded {} portal record(s) from {}.",
 				store.records.size(), baseDir);
@@ -47,7 +43,12 @@ public class PortalStore {
 	}
 
 	public boolean isClaimed(BlockPos pos) {
-		return claimedPositions.contains(pos.asLong());
+		return positionIndex.containsKey(pos.asLong());
+	}
+
+	/** The portal whose interior contains {@code pos}, or null. */
+	public PortalRecord recordAt(BlockPos pos) {
+		return positionIndex.get(pos.asLong());
 	}
 
 	public PortalRecord get(UUID id) {
@@ -90,15 +91,16 @@ public class PortalStore {
 	public RegisterResult register(Identifier dimension, BlockPos anchor, List<BlockPos> interior,
 			Direction.Axis axis) {
 		UUID id = PortalIdentity.compute(dimension, interior);
-		claim(interior);
 
 		PortalRecord existing = records.get(id);
 		if (existing != null) {
+			claim(interior, existing);
 			return new RegisterResult(existing, false, true);
 		}
 
 		PortalRecord record = PortalRecord.create(id, dimension, anchor, interior, axis);
 		records.put(id, record);
+		claim(interior, record);
 		boolean saved = PortalStorage.save(baseDir, record);
 		PortalGlimpse.LOGGER.info("Portal Glimpse: registered portal {} ({} blocks, {} axis) at {}",
 				id, interior.size(), axis, anchor);
@@ -111,9 +113,9 @@ public class PortalStore {
 		PortalStorage.save(baseDir, record);
 	}
 
-	private void claim(List<BlockPos> interior) {
+	private void claim(List<BlockPos> interior, PortalRecord record) {
 		for (BlockPos pos : interior) {
-			claimedPositions.add(pos.asLong());
+			positionIndex.put(pos.asLong(), record);
 		}
 	}
 }
