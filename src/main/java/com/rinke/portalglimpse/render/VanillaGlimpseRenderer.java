@@ -121,15 +121,25 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			}
 			// Only blocks that are actually still portal blocks render a glimpse ("there is a
 			// portal at these coordinates; render its glimpse when the portal blocks are there",
-			// §5.3) — and only those get hidden from the chunk mesh.
+			// §5.3). AND the record must still OWN those blocks: if the portal was expanded/reshaped
+			// it's a new portal that renders fully vanilla until re-captured — otherwise the old
+			// sub-shape's glimpse would paint a patch inside the bigger vanilla portal.
 			List<BlockPos> present = new ArrayList<>(record.interior.size());
+			boolean superseded = false;
 			for (BlockPos pos : record.interior) {
-				if (world.getBlockState(pos).isOf(Blocks.NETHER_PORTAL)) {
-					present.add(pos);
+				if (!world.getBlockState(pos).isOf(Blocks.NETHER_PORTAL)) {
+					continue;
+				}
+				if (store.recordAt(pos) != record) {
+					superseded = true; // a reshaped portal (a different record) now claims this block
+					break;
+				}
+				present.add(pos);
+			}
+			if (!superseded && !present.isEmpty()) {
+				for (BlockPos pos : present) {
 					hiddenPositions.add(pos.asLong());
 				}
-			}
-			if (!present.isEmpty()) {
 				drawables.add(new Drawable(record, texture, present, bounds, glimpseAlpha, veilAlpha,
 						viewerOnFaceA));
 			}
@@ -227,15 +237,24 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		float x = pos.getX();
 		float y = pos.getY();
 		float z = pos.getZ();
-		boolean stretch = push == 0.0F; // glimpse stretches across the plane; veil tiles per block
+		boolean stretch = push == 0.0F; // glimpse maps across the plane; veil tiles the sprite per block
+
+		// Cover-fit the square postcard to the portal's aspect ratio (zoom to fill, crop the
+		// overflow — no stretching/distortion). uSpan/vSpan is the centered window of the texture
+		// that gets mapped across the whole plane. The veil (non-stretch) is unaffected.
+		float coverAspect = b.width / b.height;
+		float uSpan = coverAspect < 1.0F ? coverAspect : 1.0F;
+		float vSpan = coverAspect < 1.0F ? 1.0F : 1.0F / coverAspect;
+		float uOff = (1.0F - uSpan) / 2.0F;
+		float vOff = (1.0F - vSpan) / 2.0F;
 
 		float yTop = y + 1;
 		float yBottom = y;
 		float vTop;
 		float vBottom;
 		if (stretch) {
-			vTop = (b.maxY + 1 - yTop) / b.height;
-			vBottom = (b.maxY + 1 - yBottom) / b.height;
+			vTop = vOff + (b.maxY + 1 - yTop) / b.height * vSpan;
+			vBottom = vOff + (b.maxY + 1 - yBottom) / b.height * vSpan;
 		} else {
 			vTop = v0;
 			vBottom = v1;
@@ -256,8 +275,8 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			float uLeft;
 			float uRight;
 			if (stretch) {
-				uLeft = faceA ? (b.maxX + 1 - xLeft) / b.width : (xLeft - b.minX) / b.width;
-				uRight = faceA ? (b.maxX + 1 - xRight) / b.width : (xRight - b.minX) / b.width;
+				uLeft = uOff + (faceA ? (b.maxX + 1 - xLeft) / b.width : (xLeft - b.minX) / b.width) * uSpan;
+				uRight = uOff + (faceA ? (b.maxX + 1 - xRight) / b.width : (xRight - b.minX) / b.width) * uSpan;
 			} else {
 				uLeft = u0;
 				uRight = u1;
@@ -274,8 +293,8 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			float uLeft;
 			float uRight;
 			if (stretch) {
-				uLeft = faceA ? (zLeft - b.minZ) / b.width : (b.maxZ + 1 - zLeft) / b.width;
-				uRight = faceA ? (zRight - b.minZ) / b.width : (b.maxZ + 1 - zRight) / b.width;
+				uLeft = uOff + (faceA ? (zLeft - b.minZ) / b.width : (b.maxZ + 1 - zLeft) / b.width) * uSpan;
+				uRight = uOff + (faceA ? (zRight - b.minZ) / b.width : (b.maxZ + 1 - zRight) / b.width) * uSpan;
 			} else {
 				uLeft = u0;
 				uRight = u1;
