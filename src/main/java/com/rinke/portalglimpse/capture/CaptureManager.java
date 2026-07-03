@@ -1,7 +1,8 @@
 package com.rinke.portalglimpse.capture;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 import com.rinke.portalglimpse.PortalGlimpse;
 import com.rinke.portalglimpse.data.PortalRecord;
@@ -17,6 +18,9 @@ import net.minecraft.client.world.ClientWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.Vec3d;
 
 /**
  * The capture pipeline (design doc §3.2 / §3.4): earn a glimpse by taking a 6-face cubemap of the
@@ -29,8 +33,11 @@ import net.minecraft.util.Identifier;
  */
 public final class CaptureManager {
 
-	/** Per-face panorama resolution (design doc §5.6 default 1024²). */
-	private static final int PANORAMA_RESOLUTION = 1024;
+	/** Per-face panorama / postcard resolution (design doc §5.6 default 1024²). */
+	private static final int CAPTURE_RESOLUTION = 1024;
+
+	/** How far the postcard camera sits from the portal plane, in blocks. */
+	private static final double POSTCARD_DISTANCE = 2.0;
 
 	/** Ticks to wait after ghosting so the portal's chunk sections finish re-meshing before capture. */
 	private static final int GHOST_SETTLE_TICKS = 8;
@@ -104,22 +111,69 @@ public final class CaptureManager {
 
 	private static void performCapture(MinecraftClient client, PortalRecord record) throws Exception {
 		PortalStore store = PortalDetection.store();
-		if (store == null) {
+		ClientPlayerEntity player = client.player;
+		if (store == null || player == null) {
 			return;
 		}
 		Path dir = store.baseDir().resolve(record.id.toString());
-		Files.createDirectories(dir);
 
-		// Reuse Mojang's own 6-face cubemap capture. Renders from the player's position with the
-		// portal ghosted (mesh already rebuilt) and writes panorama_0.png..panorama_5.png.
-		client.takePanorama(dir.toFile(), PANORAMA_RESOLUTION, PANORAMA_RESOLUTION);
+		List<CaptureRenderer.Shot> shots = new ArrayList<>();
+
+		// The panorama: 6 cubemap faces from the player's eyes, same face order/orientation as
+		// vanilla takePanorama (0=view yaw, 1=+90°, 2=+180°, 3=-90°, 4=up, 5=down).
+		Vec3d eye = player.getEyePos();
+		float yaw = player.getYaw();
+		shots.add(new CaptureRenderer.Shot(eye, yaw, 0.0F, "panorama_0.png"));
+		shots.add(new CaptureRenderer.Shot(eye, yaw + 90.0F, 0.0F, "panorama_1.png"));
+		shots.add(new CaptureRenderer.Shot(eye, yaw + 180.0F, 0.0F, "panorama_2.png"));
+		shots.add(new CaptureRenderer.Shot(eye, yaw - 90.0F, 0.0F, "panorama_3.png"));
+		shots.add(new CaptureRenderer.Shot(eye, yaw, -90.0F, "panorama_4.png"));
+		shots.add(new CaptureRenderer.Shot(eye, yaw, 90.0F, "panorama_5.png"));
+
+		// The postcards: camera hops 2 blocks out on each side of the portal plane and shoots
+		// through the (ghosted) portal. Named for the side the camera stands on — the face the
+		// postcard will be displayed on. Axis X portal spans east-west → faces north/south;
+		// axis Z spans north-south → faces east/west. (MC yaw: 0=south, 90=west, 180=north, -90=east.)
+		Vec3d center = portalCenter(record);
+		if (record.axis == Direction.Axis.X) {
+			shots.add(new CaptureRenderer.Shot(center.add(0, 0, -POSTCARD_DISTANCE), 0.0F, 0.0F,
+					"postcard_north.png"));
+			shots.add(new CaptureRenderer.Shot(center.add(0, 0, POSTCARD_DISTANCE), 180.0F, 0.0F,
+					"postcard_south.png"));
+		} else {
+			shots.add(new CaptureRenderer.Shot(center.add(-POSTCARD_DISTANCE, 0, 0), -90.0F, 0.0F,
+					"postcard_west.png"));
+			shots.add(new CaptureRenderer.Shot(center.add(POSTCARD_DISTANCE, 0, 0), 90.0F, 0.0F,
+					"postcard_east.png"));
+		}
+
+		CaptureRenderer.capture(client, dir, CAPTURE_RESOLUTION, shots);
 
 		record.auto.hasCapture = true;
 		record.auto.timestamp = System.currentTimeMillis();
 		store.save(record);
 
-		PortalGlimpse.LOGGER.info("Portal Glimpse: captured panorama for {} -> {}", record.id, dir);
-		feedback(client, "Portal captured — panorama saved", Formatting.GREEN);
+		PortalGlimpse.LOGGER.info("Portal Glimpse: captured panorama + postcards for {} -> {}", record.id, dir);
+		feedback(client, "Portal captured — panorama + postcards saved", Formatting.GREEN);
+	}
+
+	/** Geometric center of the portal's interior blocks. */
+	private static Vec3d portalCenter(PortalRecord record) {
+		int minX = Integer.MAX_VALUE;
+		int minY = Integer.MAX_VALUE;
+		int minZ = Integer.MAX_VALUE;
+		int maxX = Integer.MIN_VALUE;
+		int maxY = Integer.MIN_VALUE;
+		int maxZ = Integer.MIN_VALUE;
+		for (BlockPos pos : record.interior) {
+			minX = Math.min(minX, pos.getX());
+			maxX = Math.max(maxX, pos.getX());
+			minY = Math.min(minY, pos.getY());
+			maxY = Math.max(maxY, pos.getY());
+			minZ = Math.min(minZ, pos.getZ());
+			maxZ = Math.max(maxZ, pos.getZ());
+		}
+		return new Vec3d((minX + maxX + 1) / 2.0, (minY + maxY + 1) / 2.0, (minZ + maxZ + 1) / 2.0);
 	}
 
 	private static void feedback(MinecraftClient client, String text, Formatting color) {

@@ -5,6 +5,7 @@
 	"mixins": [],
 	"client": [
 		"BillboardParticleMixin",
+		"CameraMixin",
 		"ChunkRendererRegionMixin"
 	],
 	"injectors": {
