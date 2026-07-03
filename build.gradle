@@ -6,6 +6,16 @@ plugins {
 version = project.mod_version
 group = project.maven_group
 
+loom {
+	// This template uses the fabric-loom-remap plugin variant, which does NOT auto-wire the
+	// Mixin annotation processor — so no refmap was generated and mixins silently never applied.
+	// Force the legacy AP path so a refmap is produced and mixins bind at runtime.
+	mixin {
+		useLegacyMixinAp = true
+		defaultRefmapName = "portalglimpse.mixins.refmap.json"
+	}
+}
+
 repositories {
 	// Add repositories to retrieve artifacts from in here.
 	// You should only use this when depending on other mods because

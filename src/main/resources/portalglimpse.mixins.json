@@ -3,7 +3,10 @@
 	"package": "com.rinke.portalglimpse.mixin",
 	"compatibilityLevel": "JAVA_21",
 	"mixins": [],
-	"client": [],
+	"client": [
+		"BillboardParticleMixin",
+		"ChunkRendererRegionMixin"
+	],
 	"injectors": {
 		"defaultRequire": 1
 	}
