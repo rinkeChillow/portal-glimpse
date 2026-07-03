@@ -1,6 +1,7 @@
 package com.rinke.portalglimpse.mixin;
 
 import com.rinke.portalglimpse.ghost.GhostState;
+import com.rinke.portalglimpse.render.GlimpseRenderState;
 
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
@@ -26,7 +27,9 @@ public class ChunkRendererRegionMixin {
 
 	@Inject(method = "getBlockState", at = @At("HEAD"), cancellable = true)
 	private void portalglimpse$hideGhostedBlocks(BlockPos pos, CallbackInfoReturnable<BlockState> cir) {
-		if (GhostState.isHidden(pos)) {
+		// Capture ghosting (§3.2 step 3) and glimpse replacement (the vanilla portal quads make
+		// way for our glimpse + veil rendering) share the same technique: mesh the block as air.
+		if (GhostState.isHidden(pos) || GlimpseRenderState.isHidden(pos)) {
 			cir.setReturnValue(Blocks.AIR.getDefaultState());
 		}
 	}

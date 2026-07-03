@@ -1,4 +1,7 @@
 {
 	"key.categories.portal-glimpse": "Portal Glimpse",
-	"key.portal-glimpse.capture": "Capture Portal Glimpse (debug)"
+	"key.portal-glimpse.capture": "Capture Portal Glimpse (debug)",
+	"key.portal-glimpse.veil_up": "Veil Opacity + (debug)",
+	"key.portal-glimpse.veil_down": "Veil Opacity - (debug)",
+	"key.portal-glimpse.toggle_glimpses": "Toggle Glimpses (debug)"
 }

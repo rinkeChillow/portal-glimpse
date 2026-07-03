@@ -4,6 +4,8 @@ import com.rinke.portalglimpse.capture.CaptureKeybinding;
 import com.rinke.portalglimpse.capture.CaptureManager;
 import com.rinke.portalglimpse.detect.PortalDetection;
 import com.rinke.portalglimpse.render.GlimpseRenderers;
+import com.rinke.portalglimpse.render.GlimpseKeybinds;
+import com.rinke.portalglimpse.render.GlimpseWorldRendering;
 import com.rinke.portalglimpse.travel.TravelTracker;
 
 import net.fabricmc.api.ClientModInitializer;
@@ -25,6 +27,10 @@ public class PortalGlimpseClient implements ClientModInitializer {
 
 		// Automatic glimpse on portal travel, behind the held loading screen (§3.2).
 		TravelTracker.register();
+
+		// Draw glimpses on portal surfaces every frame (§4): postcard under the living veil.
+		GlimpseWorldRendering.register();
+		GlimpseKeybinds.register();
 
 		PortalGlimpse.LOGGER.info("Portal Glimpse client ready — glimpse renderer: {}",
 				GlimpseRenderers.get().name());
