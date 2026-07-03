@@ -4,28 +4,25 @@ import java.util.HashSet;
 import java.util.Set;
 
 import com.rinke.portalglimpse.data.PortalRecord;
-import com.rinke.portalglimpse.data.PortalStore;
-import com.rinke.portalglimpse.detect.PortalDetection;
 
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.world.ClientWorld;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 
 /**
  * Drives portal "ghosting" (design doc §3.2 step 3): make a specific portal's frame + portal
- * blocks (and its purple particles) invisible so the capture is clean, then restore them.
+ * blocks (and its purple particles) invisible so a capture is clean, then restore them.
  *
- * <p>This is the primitive Phase 2's capture will reuse — {@link #activate}/{@link #deactivate}
- * wrap the capture. For now {@link #toggleNearest} exposes it to a debug keybind for testing.
- * Toggling triggers a silent chunk-mesh rebuild (no resource-pack reload screen).
+ * <p>Used by the capture pipeline — {@link #activate}/{@link #deactivate} wrap the capture.
+ * Toggling schedules a targeted rebuild of only the portal's chunk sections (silent — no
+ * resource-pack reload screen, no full-world flicker).
  */
 public final class GhostController {
+
+	/** Block-coordinate box {minX,minY,minZ,maxX,maxY,maxZ} of the currently/last ghosted region. */
+	private static int[] lastRegion;
 
 	private GhostController() {
 	}
@@ -36,53 +33,16 @@ public final class GhostController {
 		if (world == null) {
 			return;
 		}
-		GhostState.set(computeHiddenBlocks(world, record));
-		rebuild(client);
+		Set<Long> hidden = computeHiddenBlocks(world, record);
+		GhostState.set(hidden);
+		lastRegion = regionOf(hidden);
+		rebuild(client, lastRegion);
 	}
 
 	public static void deactivate(MinecraftClient client) {
 		GhostState.clear();
-		rebuild(client);
-	}
-
-	/** Debug/test entry: toggle ghosting on the nearest registered portal in the current dimension. */
-	public static void toggleNearest(MinecraftClient client) {
-		if (GhostState.isActive()) {
-			deactivate(client);
-			message(client, "Ghost OFF", Formatting.GRAY);
-			return;
-		}
-		PortalStore store = PortalDetection.store();
-		ClientPlayerEntity player = client.player;
-		ClientWorld world = client.world;
-		if (store == null || player == null || world == null) {
-			return;
-		}
-		Identifier dimension = world.getRegistryKey().getValue();
-		PortalRecord nearest = findNearest(store, player.getBlockPos(), dimension);
-		if (nearest == null) {
-			message(client, "Ghost: no registered portal nearby", Formatting.RED);
-			return;
-		}
-		activate(client, nearest);
-		message(client, "Ghost ON — portal at " + nearest.anchor.getX() + ", "
-				+ nearest.anchor.getY() + ", " + nearest.anchor.getZ(), Formatting.LIGHT_PURPLE);
-	}
-
-	private static PortalRecord findNearest(PortalStore store, BlockPos from, Identifier dimension) {
-		PortalRecord best = null;
-		double bestSq = Double.MAX_VALUE;
-		for (PortalRecord record : store.all()) {
-			if (!record.dimension.equals(dimension)) {
-				continue;
-			}
-			double distSq = record.anchor.getSquaredDistance(from);
-			if (distSq < bestSq) {
-				bestSq = distSq;
-				best = record;
-			}
-		}
-		return best;
+		rebuild(client, lastRegion);
+		lastRegion = null;
 	}
 
 	/**
@@ -134,17 +94,31 @@ public final class GhostController {
 		}
 	}
 
-	private static void rebuild(MinecraftClient client) {
-		if (client.worldRenderer != null) {
-			// Rebuilds chunk meshes silently — this is a chunk re-render, NOT a resource reload,
-			// so no "resource pack changed" screen appears.
-			client.worldRenderer.reload();
+	private static int[] regionOf(Set<Long> positions) {
+		int minX = Integer.MAX_VALUE;
+		int minY = Integer.MAX_VALUE;
+		int minZ = Integer.MAX_VALUE;
+		int maxX = Integer.MIN_VALUE;
+		int maxY = Integer.MIN_VALUE;
+		int maxZ = Integer.MIN_VALUE;
+		for (long packed : positions) {
+			BlockPos pos = BlockPos.fromLong(packed);
+			minX = Math.min(minX, pos.getX());
+			maxX = Math.max(maxX, pos.getX());
+			minY = Math.min(minY, pos.getY());
+			maxY = Math.max(maxY, pos.getY());
+			minZ = Math.min(minZ, pos.getZ());
+			maxZ = Math.max(maxZ, pos.getZ());
 		}
+		return new int[] { minX, minY, minZ, maxX, maxY, maxZ };
 	}
 
-	private static void message(MinecraftClient client, String text, Formatting color) {
-		if (client.player != null) {
-			client.player.sendMessage(Text.literal("[Portal Glimpse] " + text).formatted(color), true);
+	private static void rebuild(MinecraftClient client, int[] region) {
+		if (region == null || client.worldRenderer == null) {
+			return;
 		}
+		// Rebuild only the sections covering the portal (block-coord box). Silent chunk re-render,
+		// NOT a resource reload — no "resource pack changed" screen, no full-world flicker.
+		client.worldRenderer.scheduleBlockRenders(region[0], region[1], region[2], region[3], region[4], region[5]);
 	}
 }

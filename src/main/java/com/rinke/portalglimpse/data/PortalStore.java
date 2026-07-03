@@ -58,6 +58,23 @@ public class PortalStore {
 		return records.values();
 	}
 
+	/** Nearest registered portal to {@code from} within the given dimension, or null if none. */
+	public PortalRecord findNearest(BlockPos from, Identifier dimension) {
+		PortalRecord best = null;
+		double bestSq = Double.MAX_VALUE;
+		for (PortalRecord record : records.values()) {
+			if (!record.dimension.equals(dimension)) {
+				continue;
+			}
+			double distSq = record.anchor.getSquaredDistance(from);
+			if (distSq < bestSq) {
+				bestSq = distSq;
+				best = record;
+			}
+		}
+		return best;
+	}
+
 	public Path baseDir() {
 		return baseDir;
 	}
