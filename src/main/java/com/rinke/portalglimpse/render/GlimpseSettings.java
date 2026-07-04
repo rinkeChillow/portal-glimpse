@@ -12,8 +12,13 @@ public final class GlimpseSettings {
 	/** Master toggle for the glimpse view layer (H). The modded veil renders either way. */
 	public static boolean glimpsesVisible = true;
 
-	/** Proximity fade of the 2D postcard (off while iterating; Phase 4's crossfade will own this). */
-	public static boolean proximityFade = false;
+	/** Proximity fade of the 2D postcard as the player approaches (toggle J). Phase 4's panorama
+	 * crossfade will eventually take over the close range this frees up. */
+	public static boolean proximityFade = true;
+
+	/** Interior-mapping "room" radius for the parallax panorama, in blocks (§4.1). Live-tunable
+	 * (Numpad 8/2): smaller = wider/closer view, larger = narrower/further. */
+	public static float panoramaRadius = 8.0F;
 
 	private GlimpseSettings() {
 	}

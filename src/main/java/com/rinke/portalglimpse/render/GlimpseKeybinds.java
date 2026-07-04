@@ -25,6 +25,9 @@ public final class GlimpseKeybinds {
 	private static KeyBinding veilUpKey;
 	private static KeyBinding veilDownKey;
 	private static KeyBinding toggleGlimpsesKey;
+	private static KeyBinding toggleFadeKey;
+	private static KeyBinding radiusUpKey;
+	private static KeyBinding radiusDownKey;
 
 	private GlimpseKeybinds() {
 	}
@@ -44,6 +47,21 @@ public final class GlimpseKeybinds {
 				"key.portal-glimpse.toggle_glimpses",
 				InputUtil.Type.KEYSYM,
 				GLFW.GLFW_KEY_H,
+				"key.categories.portal-glimpse"));
+		toggleFadeKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+				"key.portal-glimpse.toggle_fade",
+				InputUtil.Type.KEYSYM,
+				GLFW.GLFW_KEY_J,
+				"key.categories.portal-glimpse"));
+		radiusUpKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+				"key.portal-glimpse.radius_up",
+				InputUtil.Type.KEYSYM,
+				GLFW.GLFW_KEY_KP_8,
+				"key.categories.portal-glimpse"));
+		radiusDownKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+				"key.portal-glimpse.radius_down",
+				InputUtil.Type.KEYSYM,
+				GLFW.GLFW_KEY_KP_2,
 				"key.categories.portal-glimpse"));
 		ClientTickEvents.END_CLIENT_TICK.register(GlimpseKeybinds::onTick);
 	}
@@ -72,6 +90,25 @@ public final class GlimpseKeybinds {
 			actionbar(client, GlimpseSettings.glimpsesVisible
 					? "Glimpses ON — windows into the other world"
 					: "Glimpses OFF — modded swirl only");
+		}
+		while (toggleFadeKey.wasPressed()) {
+			GlimpseSettings.proximityFade = !GlimpseSettings.proximityFade;
+			actionbar(client, GlimpseSettings.proximityFade
+					? "Postcard distance fade ON"
+					: "Postcard distance fade OFF");
+		}
+		boolean radiusChanged = false;
+		while (radiusUpKey.wasPressed()) {
+			GlimpseSettings.panoramaRadius = Math.min(64.0F, GlimpseSettings.panoramaRadius + 2.0F);
+			radiusChanged = true;
+		}
+		while (radiusDownKey.wasPressed()) {
+			GlimpseSettings.panoramaRadius = Math.max(2.0F, GlimpseSettings.panoramaRadius - 2.0F);
+			radiusChanged = true;
+		}
+		if (radiusChanged) {
+			actionbar(client, "Panorama room radius: " + Math.round(GlimpseSettings.panoramaRadius)
+					+ " blocks");
 		}
 	}
 

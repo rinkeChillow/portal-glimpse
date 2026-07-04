@@ -5,6 +5,10 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import org.joml.Matrix4fStack;
+
+import com.mojang.blaze3d.systems.RenderSystem;
+
 import com.rinke.portalglimpse.data.PortalRecord;
 import com.rinke.portalglimpse.data.PortalStore;
 import com.rinke.portalglimpse.detect.PortalDetection;
@@ -14,11 +18,19 @@ import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gl.GlUniform;
+import net.minecraft.client.gl.ShaderProgram;
+import net.minecraft.client.render.BufferBuilder;
+import net.minecraft.client.render.BufferRenderer;
+import net.minecraft.client.render.BuiltBuffer;
 import net.minecraft.client.render.LightmapTextureManager;
 import net.minecraft.client.render.OverlayTexture;
 import net.minecraft.client.render.RenderLayer;
+import net.minecraft.client.render.Tessellator;
 import net.minecraft.client.render.VertexConsumer;
 import net.minecraft.client.render.VertexConsumerProvider;
+import net.minecraft.client.render.VertexFormat;
+import net.minecraft.client.render.VertexFormats;
 import net.minecraft.client.texture.Sprite;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.client.world.ClientWorld;
@@ -50,6 +62,9 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 
 	/** Beyond this distance the glimpse isn't drawn at all (proper zones arrive in Phase 4). */
 	private static final double MAX_RENDER_DISTANCE_SQ = 128.0 * 128.0;
+
+	/** Within this distance the parallax panorama renders on the portal (§4.2 close zone). */
+	private static final double PANORAMA_DISTANCE = 32.0;
 
 	/** Proximity fade: the 2D postcard is at full strength here, fading as the player approaches… */
 	private static final double FADE_START = 20.0;
@@ -175,6 +190,121 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		}
 
 		matrices.pop();
+
+		// Pass 3: the parallax panorama for close portals (§4.1) — the living window into the
+		// other world. Drawn with our custom shader in camera-relative space; the veil (already
+		// on the framebuffer) stays layered over it.
+		renderPanoramas(context, store, cameraPos, drawables);
+	}
+
+	/**
+	 * Draws the cubemap panorama on each nearby portal via the {@code portal_panorama} shader. Each
+	 * fragment's view ray (its camera-relative position) selects and samples one of the six faces,
+	 * so the view shifts with real perspective as the player moves.
+	 */
+	private static void renderPanoramas(WorldRenderContext context, PortalStore store, Vec3d cameraPos,
+			List<Drawable> drawables) {
+		ShaderProgram shader = PortalShaders.panorama();
+		if (shader == null) {
+			return;
+		}
+		MinecraftClient client = MinecraftClient.getInstance();
+
+		List<PanoDraw> panos = new ArrayList<>();
+		for (Drawable drawable : drawables) {
+			if (drawable.bounds().distanceTo(cameraPos) > PANORAMA_DISTANCE) {
+				continue;
+			}
+			Identifier[] faces = PanoramaTextures.get(client, store.baseDir(), drawable.record());
+			if (faces != null) {
+				panos.add(new PanoDraw(drawable, faces));
+			}
+		}
+		if (panos.isEmpty()) {
+			return;
+		}
+
+		// Fold the camera rotation (context pose) into the model-view so our camera-relative
+		// vertices land in view space, regardless of whether the rotation lived in the pose or in
+		// RenderSystem to begin with.
+		Matrix4fStack modelView = RenderSystem.getModelViewStack();
+		modelView.pushMatrix();
+		modelView.mul(context.matrixStack().peek().getPositionMatrix());
+		RenderSystem.applyModelViewMatrix();
+
+		RenderSystem.enableBlend();
+		RenderSystem.defaultBlendFunc();
+		RenderSystem.enableDepthTest();
+		RenderSystem.depthMask(true);
+		RenderSystem.disableCull();
+		RenderSystem.setShader(PortalShaders::panorama);
+
+		GlUniform alpha = shader.getUniform("GlimpseAlpha");
+		GlUniform center = shader.getUniform("PortalCenter");
+		GlUniform radius = shader.getUniform("SphereRadius");
+
+		for (PanoDraw pano : panos) {
+			for (int i = 0; i < 6; i++) {
+				RenderSystem.setShaderTexture(i, pano.faces()[i]);
+			}
+			// Per-portal interior-mapping uniforms: the sphere is centered on this portal.
+			Bounds b = pano.drawable().bounds();
+			if (alpha != null) {
+				alpha.set(1.0F);
+			}
+			if (center != null) {
+				center.set(
+						(float) ((b.minX() + b.maxX() + 1) / 2.0 - cameraPos.x),
+						(float) ((b.minY() + b.maxY() + 1) / 2.0 - cameraPos.y),
+						(float) ((b.minZ() + b.maxZ() + 1) / 2.0 - cameraPos.z));
+			}
+			if (radius != null) {
+				radius.set(GlimpseSettings.panoramaRadius);
+			}
+
+			boolean axisX = pano.drawable().record().axis == Direction.Axis.X;
+			boolean faceA = pano.drawable().viewerOnFaceA();
+			BufferBuilder buffer = Tessellator.getInstance()
+					.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION);
+			for (BlockPos pos : pano.drawable().blocks()) {
+				emitPanoramaQuad(buffer, pos, axisX, faceA, cameraPos);
+			}
+			BuiltBuffer built = buffer.endNullable();
+			if (built != null) {
+				BufferRenderer.drawWithGlobalProgram(built);
+			}
+		}
+
+		RenderSystem.enableCull();
+		modelView.popMatrix();
+		RenderSystem.applyModelViewMatrix();
+	}
+
+	private record PanoDraw(Drawable drawable, Identifier[] faces) {
+	}
+
+	/** One portal-plane quad in camera-relative space (POSITION only; the shader does the rest). */
+	private static void emitPanoramaQuad(BufferBuilder buffer, BlockPos pos, boolean axisX, boolean faceA,
+			Vec3d cam) {
+		float y0 = (float) (pos.getY() - cam.y);
+		float y1 = (float) (pos.getY() + 1 - cam.y);
+		if (axisX) {
+			float plane = (float) ((faceA ? pos.getZ() + PLANE_LOW : pos.getZ() + PLANE_HIGH) - cam.z);
+			float xa = (float) (pos.getX() - cam.x);
+			float xb = (float) (pos.getX() + 1 - cam.x);
+			buffer.vertex(xa, y1, plane);
+			buffer.vertex(xa, y0, plane);
+			buffer.vertex(xb, y0, plane);
+			buffer.vertex(xb, y1, plane);
+		} else {
+			float plane = (float) ((faceA ? pos.getX() + PLANE_LOW : pos.getX() + PLANE_HIGH) - cam.x);
+			float za = (float) (pos.getZ() - cam.z);
+			float zb = (float) (pos.getZ() + 1 - cam.z);
+			buffer.vertex(plane, y1, za);
+			buffer.vertex(plane, y0, za);
+			buffer.vertex(plane, y0, zb);
+			buffer.vertex(plane, y1, zb);
+		}
 	}
 
 	private record Drawable(PortalRecord record, GlimpseTextures.GlimpseTexture texture,

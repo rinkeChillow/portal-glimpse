@@ -3,5 +3,8 @@
 	"key.portal-glimpse.capture": "Capture Portal Glimpse (debug)",
 	"key.portal-glimpse.veil_up": "Veil Opacity + (debug)",
 	"key.portal-glimpse.veil_down": "Veil Opacity - (debug)",
-	"key.portal-glimpse.toggle_glimpses": "Toggle Glimpses (debug)"
+	"key.portal-glimpse.toggle_glimpses": "Toggle Glimpses (debug)",
+	"key.portal-glimpse.toggle_fade": "Toggle Postcard Distance Fade (debug)",
+	"key.portal-glimpse.radius_up": "Panorama Room Radius + (debug)",
+	"key.portal-glimpse.radius_down": "Panorama Room Radius - (debug)"
 }

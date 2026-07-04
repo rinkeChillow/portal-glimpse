@@ -13,9 +13,11 @@ public final class GlimpseWorldRendering {
 	}
 
 	public static void register() {
+		PortalShaders.register();
 		WorldRenderEvents.AFTER_TRANSLUCENT.register(context -> GlimpseRenderers.get().renderWorld(context));
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(() -> {
 			GlimpseTextures.clear(client);
+			PanoramaTextures.clear(client);
 			GlimpseRenderState.clear(client);
 		}));
 	}
