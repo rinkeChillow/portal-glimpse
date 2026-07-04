@@ -52,13 +52,16 @@ void main() {
 	float b = dot(rayFromEye, PortalCenter);
 	float disc = b * b - (dot(PortalCenter, PortalCenter) - SphereRadius * SphereRadius);
 
-	vec3 dir;
+	// Ray misses the sphere → draw NOTHING. The old code fell back to `dir = rayFromEye`, which
+	// samples the cubemap like a skybox and painted a second, full-size copy of the panorama across
+	// the whole portal whenever the sphere was smaller than the portal (i.e. the camera sat outside
+	// it). Discarding those fragments leaves only the single interior-mapped sphere.
 	if (disc <= 0.0) {
-		dir = rayFromEye; // degenerate (ray misses the room) — fall back to the plain view ray
-	} else {
-		float t = b + sqrt(disc);
-		dir = t * rayFromEye - PortalCenter;
+		discard;
 	}
+
+	float t = b + sqrt(disc);
+	vec3 dir = t * rayFromEye - PortalCenter;
 
 	fragColor = vec4(sampleCube(dir).rgb, GlimpseAlpha);
 }

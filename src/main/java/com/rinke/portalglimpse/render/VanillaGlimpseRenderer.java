@@ -253,10 +253,11 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			for (int i = 0; i < 6; i++) {
 				RenderSystem.setShaderTexture(i, pano.faces()[i]);
 			}
-			// Per-portal interior-mapping uniforms: a large fixed sphere physically centered on the
-			// portal (where the panorama was captured). Being big makes the sampled direction track
-			// the true view ray, so the view narrows with distance and the content scales with the
-			// portal — and being world-fixed (not camera-attached) is what stops the swaying.
+			// Per-portal interior-mapping uniforms: a sphere centered on the portal (where the panorama
+			// was captured), with its radius scaled to the viewer→portal DISTANCE. Growing/shrinking
+			// the sphere in lock-step with distance keeps its on-screen size fixed relative to the
+			// portal, so the sampled angular cone — and thus the content's scale — is the same at every
+			// range. That cancels the telephoto zoom-in that a fixed radius produced when backing away.
 			Bounds b = pano.drawable().bounds();
 			float cx = (float) ((b.minX() + b.maxX() + 1) / 2.0 - cameraPos.x);
 			float cy = (float) ((b.minY() + b.maxY() + 1) / 2.0 - cameraPos.y);
@@ -268,7 +269,8 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				center.set(cx, cy, cz);
 			}
 			if (radius != null) {
-				radius.set(GlimpseSettings.panoramaRadius);
+				float dist = (float) Math.sqrt(cx * cx + cy * cy + cz * cz);
+				radius.set(GlimpseSettings.panoramaScale * dist);
 			}
 
 			boolean axisX = pano.drawable().record().axis == Direction.Axis.X;

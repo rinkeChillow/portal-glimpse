@@ -1,6 +1,5 @@
 package com.rinke.portalglimpse;
 
-import com.rinke.portalglimpse.capture.CaptureKeybinding;
 import com.rinke.portalglimpse.capture.CaptureManager;
 import com.rinke.portalglimpse.detect.PortalDetection;
 import com.rinke.portalglimpse.render.GlimpseRenderers;
@@ -21,9 +20,10 @@ public class PortalGlimpseClient implements ClientModInitializer {
 		// Detect and register portals as the world streams in, and load their records (§3.2, §5).
 		PortalDetection.register();
 
-		// Capture pipeline (§3.2/§3.4): the debug key ghosts a portal and takes its cubemap glimpse.
+		// Capture pipeline (§3.2/§3.4): ghosts a portal and takes its cubemap glimpse. The manual
+		// capture keybind (G) is disabled for now — captures happen automatically on portal travel
+		// (TravelTracker). Re-add CaptureKeybinding.register() to bring the debug key back.
 		CaptureManager.register();
-		CaptureKeybinding.register();
 
 		// Automatic glimpse on portal travel, behind the held loading screen (§3.2).
 		TravelTracker.register();
