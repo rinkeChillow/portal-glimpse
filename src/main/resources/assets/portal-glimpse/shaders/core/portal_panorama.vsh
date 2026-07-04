@@ -5,13 +5,13 @@ in vec3 Position;
 uniform mat4 ModelViewMat;
 uniform mat4 ProjMat;
 
-// Camera-relative world position of this vertex on the portal plane. It's world-axis aligned (the
-// Java emits vertices as worldPos - cameraPos, no rotation) and bob-free, so the fragment shader can
-// work out where on the opening each fragment sits and build the sample direction from that (design
-// doc §4.1) — independent of the viewer's distance, which is what stops the far-away telephoto zoom.
-out vec3 worldRel;
+// Camera-relative world position of this vertex = the view ray from the eye to the portal
+// surface. It's bob-free (both endpoints are), so the sampled content stays glued to the (bobbed)
+// quad instead of swimming — the panorama tracks the frame like the postcard does. Interpolated
+// across the quad it becomes the per-fragment view direction (design doc §4.1).
+out vec3 rayDir;
 
 void main() {
 	gl_Position = ProjMat * ModelViewMat * vec4(Position, 1.0);
-	worldRel = Position;
+	rayDir = Position;
 }

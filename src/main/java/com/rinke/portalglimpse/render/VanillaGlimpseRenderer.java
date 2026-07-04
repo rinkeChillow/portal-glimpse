@@ -5,6 +5,10 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import org.joml.Matrix4fStack;
+
+import com.mojang.blaze3d.systems.RenderSystem;
+
 import com.rinke.portalglimpse.data.PortalRecord;
 import com.rinke.portalglimpse.data.PortalStore;
 import com.rinke.portalglimpse.detect.PortalDetection;
@@ -14,11 +18,19 @@ import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gl.GlUniform;
+import net.minecraft.client.gl.ShaderProgram;
+import net.minecraft.client.render.BufferBuilder;
+import net.minecraft.client.render.BufferRenderer;
+import net.minecraft.client.render.BuiltBuffer;
 import net.minecraft.client.render.LightmapTextureManager;
 import net.minecraft.client.render.OverlayTexture;
 import net.minecraft.client.render.RenderLayer;
+import net.minecraft.client.render.Tessellator;
 import net.minecraft.client.render.VertexConsumer;
 import net.minecraft.client.render.VertexConsumerProvider;
+import net.minecraft.client.render.VertexFormat;
+import net.minecraft.client.render.VertexFormats;
 import net.minecraft.client.texture.Sprite;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.client.world.ClientWorld;
@@ -51,6 +63,9 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	/** Beyond this distance the glimpse isn't drawn at all (proper zones arrive in Phase 4). */
 	private static final double MAX_RENDER_DISTANCE_SQ = 128.0 * 128.0;
 
+	/** Within this distance the parallax panorama renders on the portal (§4.2 close zone). */
+	private static final double PANORAMA_DISTANCE = 32.0;
+
 	/** Proximity fade: the 2D postcard is at full strength here, fading as the player approaches… */
 	private static final double FADE_START = 20.0;
 
@@ -60,6 +75,9 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 
 	/** Offset of the veil in front of the glimpse plane, avoiding z-fighting. */
 	private static final float VEIL_OFFSET = 0.002F;
+
+	/** Offset of the panorama just BEHIND the postcard plane (postcard sits a hair in front). */
+	private static final float PANORAMA_OFFSET = 0.002F;
 
 	/** In-block positions of the portal plane quads, matching the vanilla portal model. */
 	private static final float PLANE_LOW = 6.0F / 16.0F;
@@ -150,32 +168,18 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			return;
 		}
 
+		// Pass 0: the parallax panorama, drawn FIRST and sitting just BEHIND the postcard plane, so
+		// the postcard blends over it and fades to reveal it up close (the crossfade, §4.2).
+		renderPanoramas(context, store, cameraPos, drawables);
+
 		MatrixStack matrices = context.matrixStack();
 		matrices.push();
 		matrices.translate(-cameraPos.x, -cameraPos.y, -cameraPos.z);
 		MatrixStack.Entry entry = matrices.peek();
 		VertexConsumerProvider consumers = context.consumers();
 
-		// Pass 0: the projected "room" — each captured cubemap face drawn as a flat panel on the
-		// matching side behind the portal, forming a box the size of the opening (a 3×3 portal → a
-		// 3-deep room). Looking through the portal shows that room in true 3D perspective, so it
-		// scales naturally with distance (no shader, no telephoto zoom). Drawn and flushed FIRST so
-		// the postcard/veil composite over it.
-		for (Drawable drawable : drawables) {
-			Identifier[] faces = PanoramaDebug.isTarget(drawable.record().id)
-					? PanoramaDebug.FACES
-					: PanoramaTextures.get(client, store.baseDir(), drawable.record());
-			if (faces != null) {
-				emitRoom(entry, consumers, drawable, faces,
-						GlimpseSettings.glimpsesVisible ? 255 : 0);
-			}
-		}
-		if (consumers instanceof VertexConsumerProvider.Immediate roomFlush) {
-			roomFlush.draw();
-		}
-
-		// Pass 1: the glimpses (2D postcards). Flushed to the framebuffer before the veils are
-		// emitted so the veil always composites OVER the glimpse (§4.3 "a ghost dancing over").
+		// Pass 1: the glimpses. Flushed to the framebuffer before the veils are emitted so the
+		// veil always composites OVER the glimpse (§4.3 "a ghost dancing over the glimpse").
 		for (Drawable drawable : drawables) {
 			emitGlimpse(entry, consumers, drawable);
 		}
@@ -196,101 +200,123 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	}
 
 	/**
-	 * Draws the "room" for one portal: the six captured cubemap faces as flat panels forming a box
-	 * behind the opening. The box is the width/height of the portal opening and {@code depth = opening
-	 * width} deep, so a 3×3 portal projects a 3-deep room. Each face lands on the wall perpendicular
-	 * to the direction it was captured — south/north on the far wall, east/west/up/down as the side
-	 * walls — so looking through the portal reveals that room in true perspective (design doc §4.1).
-	 *
-	 * <p>The wall UVs mirror {@code portal_panorama.fsh}'s {@code sampleCube} conventions, so the
-	 * labeled debug cubemap (K) reads correctly and reveals any per-face flip to fix. The face nearest
-	 * the viewer (the opening itself) is skipped.
+	 * Draws the cubemap panorama on each nearby portal via the {@code portal_panorama} shader. Each
+	 * fragment's view ray (its camera-relative position) selects and samples one of the six faces,
+	 * so the view shifts with real perspective as the player moves.
 	 */
-	private static void emitRoom(MatrixStack.Entry entry, VertexConsumerProvider consumers,
-			Drawable drawable, Identifier[] faces, int alpha) {
-		if (alpha <= 0) {
+	private static void renderPanoramas(WorldRenderContext context, PortalStore store, Vec3d cameraPos,
+			List<Drawable> drawables) {
+		ShaderProgram shader = PortalShaders.panorama();
+		if (shader == null) {
 			return;
 		}
-		Bounds b = drawable.bounds();
-		boolean axisX = drawable.record().axis == Direction.Axis.X;
-		boolean faceA = drawable.viewerOnFaceA();
-		float depth = b.width() * GlimpseSettings.panoramaDepth;
+		MinecraftClient client = MinecraftClient.getInstance();
 
-		float x0 = b.minX();
-		float x1 = b.maxX() + 1;
-		float y0 = b.minY();
-		float y1 = b.maxY() + 1;
-		float z0 = b.minZ();
-		float z1 = b.maxZ() + 1;
-
-		Identifier south = faces[0];
-		Identifier west = faces[1];
-		Identifier north = faces[2];
-		Identifier east = faces[3];
-		Identifier up = faces[4];
-		Identifier down = faces[5];
-
-		if (axisX) {
-			// Opening lies in X/Y; the room extends along Z (toward the destination).
-			float zf = b.minZ() + 0.5F;
-			float zb = faceA ? zf + depth : zf - depth;
-			float zN = Math.min(zf, zb); // north (-Z) end
-			float zS = Math.max(zf, zb); // south (+Z) end
-
-			// Far wall — the face the viewer looks toward through the portal.
-			if (faceA) { // looking +Z (south); image left = east(+X), up = +Y
-				quad(entry, consumers, south, alpha, x1, y1, zb, x0, y1, zb, x0, y0, zb, x1, y0, zb);
-			} else { // looking -Z (north); image left = west(-X)
-				quad(entry, consumers, north, alpha, x0, y1, zb, x1, y1, zb, x1, y0, zb, x0, y0, zb);
+		List<PanoDraw> panos = new ArrayList<>();
+		for (Drawable drawable : drawables) {
+			if (drawable.bounds().distanceTo(cameraPos) > PANORAMA_DISTANCE) {
+				continue;
 			}
-			// Side walls (same for both facings): east on +X, west on -X, ceiling, floor.
-			quad(entry, consumers, east, alpha, x1, y1, zN, x1, y1, zS, x1, y0, zS, x1, y0, zN);
-			quad(entry, consumers, west, alpha, x0, y1, zS, x0, y1, zN, x0, y0, zN, x0, y0, zS);
-			quad(entry, consumers, up, alpha, x1, y1, zN, x0, y1, zN, x0, y1, zS, x1, y1, zS);
-			quad(entry, consumers, down, alpha, x1, y0, zS, x0, y0, zS, x0, y0, zN, x1, y0, zN);
-		} else {
-			// Opening lies in Z/Y; the room extends along X.
-			float xf = b.minX() + 0.5F;
-			float xb = faceA ? xf + depth : xf - depth;
-			float xW = Math.min(xf, xb); // west (-X) end
-			float xE = Math.max(xf, xb); // east (+X) end
-
-			// Far wall.
-			if (faceA) { // looking +X (east); image left = north(-Z)
-				quad(entry, consumers, east, alpha, xb, y1, z0, xb, y1, z1, xb, y0, z1, xb, y0, z0);
-			} else { // looking -X (west); image left = south(+Z)
-				quad(entry, consumers, west, alpha, xb, y1, z1, xb, y1, z0, xb, y0, z0, xb, y0, z1);
+			// Debug override (K): the labeled test cubemap, so face mapping/orientation is readable.
+			Identifier[] faces = PanoramaDebug.isTarget(drawable.record().id)
+					? PanoramaDebug.FACES
+					: PanoramaTextures.get(client, store.baseDir(), drawable.record());
+			if (faces != null) {
+				panos.add(new PanoDraw(drawable, faces));
 			}
-			// Side walls: north on -Z, south on +Z, ceiling, floor.
-			quad(entry, consumers, north, alpha, xW, y1, z0, xE, y1, z0, xE, y0, z0, xW, y0, z0);
-			quad(entry, consumers, south, alpha, xE, y1, z1, xW, y1, z1, xW, y0, z1, xE, y0, z1);
-			quad(entry, consumers, up, alpha, xE, y1, z0, xW, y1, z0, xW, y1, z1, xE, y1, z1);
-			quad(entry, consumers, down, alpha, xE, y0, z1, xW, y0, z1, xW, y0, z0, xE, y0, z0);
 		}
+		if (panos.isEmpty()) {
+			return;
+		}
+
+		// Draw in view space via the world pose (which carries the walk view-bob) so the panorama
+		// quad bobs WITH the obsidian frame. The shader re-tracks the sample ray through this same
+		// bobbed matrix (CamRot below), so the content stays glued to the frame instead of
+		// swimming like a held item. Camera-relative vertices land in view space.
+		Matrix4fStack modelView = RenderSystem.getModelViewStack();
+		modelView.pushMatrix();
+		modelView.mul(context.matrixStack().peek().getPositionMatrix());
+		RenderSystem.applyModelViewMatrix();
+
+		RenderSystem.enableBlend();
+		RenderSystem.defaultBlendFunc();
+		RenderSystem.enableDepthTest();
+		RenderSystem.depthMask(true);
+		RenderSystem.disableCull();
+		RenderSystem.setShader(PortalShaders::panorama);
+
+		GlUniform alpha = shader.getUniform("GlimpseAlpha");
+		GlUniform center = shader.getUniform("PortalCenter");
+		GlUniform radius = shader.getUniform("SphereRadius");
+
+		for (PanoDraw pano : panos) {
+			for (int i = 0; i < 6; i++) {
+				RenderSystem.setShaderTexture(i, pano.faces()[i]);
+			}
+			// Per-portal interior-mapping uniforms: a large fixed sphere physically centered on the
+			// portal (where the panorama was captured). Being big makes the sampled direction track
+			// the true view ray, so the view narrows with distance and the content scales with the
+			// portal — and being world-fixed (not camera-attached) is what stops the swaying.
+			Bounds b = pano.drawable().bounds();
+			float cx = (float) ((b.minX() + b.maxX() + 1) / 2.0 - cameraPos.x);
+			float cy = (float) ((b.minY() + b.maxY() + 1) / 2.0 - cameraPos.y);
+			float cz = (float) ((b.minZ() + b.maxZ() + 1) / 2.0 - cameraPos.z);
+			if (alpha != null) {
+				alpha.set(1.0F);
+			}
+			if (center != null) {
+				center.set(cx, cy, cz);
+			}
+			if (radius != null) {
+				radius.set(GlimpseSettings.panoramaRadius);
+			}
+
+			boolean axisX = pano.drawable().record().axis == Direction.Axis.X;
+			boolean faceA = pano.drawable().viewerOnFaceA();
+			BufferBuilder buffer = Tessellator.getInstance()
+					.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION);
+			for (BlockPos pos : pano.drawable().blocks()) {
+				emitPanoramaQuad(buffer, pos, axisX, faceA, cameraPos);
+			}
+			BuiltBuffer built = buffer.endNullable();
+			if (built != null) {
+				BufferRenderer.drawWithGlobalProgram(built);
+			}
+		}
+
+		RenderSystem.enableCull();
+		modelView.popMatrix();
+		RenderSystem.applyModelViewMatrix();
 	}
 
-	/**
-	 * Emits one textured room-wall quad. Corners are given in perimeter order top-left, top-right,
-	 * bottom-right, bottom-left (mapped to UV (0,0),(1,0),(1,1),(0,1)); both windings are emitted so
-	 * the culling layer keeps whichever faces the camera. Depth is written (like the postcard) so the
-	 * walls occlude each other correctly, and normals point up for flat, full-brightness shading.
-	 */
-	private static void quad(MatrixStack.Entry entry, VertexConsumerProvider consumers, Identifier tex,
-			int alpha,
-			float ax, float ay, float az, float bx, float by, float bz,
-			float cx, float cy, float cz, float dx, float dy, float dz) {
-		if (tex == null) {
-			return;
+	private record PanoDraw(Drawable drawable, Identifier[] faces) {
+	}
+
+	/** One portal-plane quad in camera-relative space (POSITION only; the shader does the rest). */
+	private static void emitPanoramaQuad(BufferBuilder buffer, BlockPos pos, boolean axisX, boolean faceA,
+			Vec3d cam) {
+		float y0 = (float) (pos.getY() - cam.y);
+		float y1 = (float) (pos.getY() + 1 - cam.y);
+		// Push the panorama plane away from the camera (behind the postcard) — faceA looks toward
+		// -axis, faceB toward +axis, so "away" flips sign with the face.
+		float back = faceA ? PANORAMA_OFFSET : -PANORAMA_OFFSET;
+		if (axisX) {
+			float plane = (float) ((faceA ? pos.getZ() + PLANE_LOW : pos.getZ() + PLANE_HIGH) + back - cam.z);
+			float xa = (float) (pos.getX() - cam.x);
+			float xb = (float) (pos.getX() + 1 - cam.x);
+			buffer.vertex(xa, y1, plane);
+			buffer.vertex(xa, y0, plane);
+			buffer.vertex(xb, y0, plane);
+			buffer.vertex(xb, y1, plane);
+		} else {
+			float plane = (float) ((faceA ? pos.getX() + PLANE_LOW : pos.getX() + PLANE_HIGH) + back - cam.x);
+			float za = (float) (pos.getZ() - cam.z);
+			float zb = (float) (pos.getZ() + 1 - cam.z);
+			buffer.vertex(plane, y1, za);
+			buffer.vertex(plane, y0, za);
+			buffer.vertex(plane, y0, zb);
+			buffer.vertex(plane, y1, zb);
 		}
-		VertexConsumer vc = consumers.getBuffer(RenderLayer.getItemEntityTranslucentCull(tex));
-		vertex(entry, vc, ax, ay, az, 0.0F, 0.0F, alpha);
-		vertex(entry, vc, bx, by, bz, 1.0F, 0.0F, alpha);
-		vertex(entry, vc, cx, cy, cz, 1.0F, 1.0F, alpha);
-		vertex(entry, vc, dx, dy, dz, 0.0F, 1.0F, alpha);
-		vertex(entry, vc, dx, dy, dz, 0.0F, 1.0F, alpha);
-		vertex(entry, vc, cx, cy, cz, 1.0F, 1.0F, alpha);
-		vertex(entry, vc, bx, by, bz, 1.0F, 0.0F, alpha);
-		vertex(entry, vc, ax, ay, az, 0.0F, 0.0F, alpha);
 	}
 
 	private record Drawable(PortalRecord record, GlimpseTextures.GlimpseTexture texture,

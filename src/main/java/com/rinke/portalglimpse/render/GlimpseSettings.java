@@ -16,9 +16,10 @@ public final class GlimpseSettings {
 	 * crossfade will eventually take over the close range this frees up. */
 	public static boolean proximityFade = true;
 
-	/** Depth of the projected "room" behind the portal, as a multiple of the opening width (§4.1).
-	 * 1.0 = a cube the size of the opening; larger = a longer tunnel. Live-tunable (Numpad 8/2). */
-	public static float panoramaDepth = 1.0F;
+	/** Radius (blocks) of the fixed interior-mapping sphere centered on the portal (§4.1).
+	 * Live-tunable (Numpad 8/2). Large (≈64) behaves like the real distant environment: content
+	 * scales with the portal and stays world-fixed. Small = roomier but breaks scaling. */
+	public static float panoramaRadius = 64.0F;
 
 	private GlimpseSettings() {
 	}

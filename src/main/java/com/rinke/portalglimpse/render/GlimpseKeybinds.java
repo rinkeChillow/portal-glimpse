@@ -108,18 +108,18 @@ public final class GlimpseKeybinds {
 					? "Postcard distance fade ON"
 					: "Postcard distance fade OFF");
 		}
-		boolean depthChanged = false;
+		boolean radiusChanged = false;
 		while (radiusUpKey.wasPressed()) {
-			GlimpseSettings.panoramaDepth = Math.min(4.0F, GlimpseSettings.panoramaDepth + 0.25F);
-			depthChanged = true;
+			GlimpseSettings.panoramaRadius = Math.min(256.0F, GlimpseSettings.panoramaRadius + 4.0F);
+			radiusChanged = true;
 		}
 		while (radiusDownKey.wasPressed()) {
-			GlimpseSettings.panoramaDepth = Math.max(0.25F, GlimpseSettings.panoramaDepth - 0.25F);
-			depthChanged = true;
+			GlimpseSettings.panoramaRadius = Math.max(2.0F, GlimpseSettings.panoramaRadius - 4.0F);
+			radiusChanged = true;
 		}
-		if (depthChanged) {
-			actionbar(client, String.format("Room depth: %.2f× opening width",
-					GlimpseSettings.panoramaDepth));
+		if (radiusChanged) {
+			actionbar(client, "Panorama sphere radius: " + Math.round(GlimpseSettings.panoramaRadius)
+					+ " blocks");
 		}
 		while (debugPanoramaKey.wasPressed()) {
 			toggleDebugPanorama(client);

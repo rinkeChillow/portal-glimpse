@@ -11,30 +11,14 @@ uniform sampler2D Sampler5;
 
 uniform float GlimpseAlpha;
 
-// Portal frame — all camera-relative / world-axis aligned, matching the vertex position.
-//   PortalCenter  : vector from the eye to the portal centre
-//   PortalForward : unit direction the viewer looks THROUGH the portal (into the destination)
-//   PortalRight   : unit in-plane horizontal = the viewer's right-hand direction
-//   HalfSpan      : half of the opening's LARGER dimension (blocks); normalising both axes by it
-//                   reproduces the postcard's cover-fit crop (short side shows less of the face)
-//   Spread        : framing width. 1.0 = the postcard's cover-fit; larger fans the view wider so
-//                   the destination looks SMALLER (fixes the telephoto-at-range zoom).
-//   Parallax      : depth strength — how far the view swings as the eye moves off the portal axis.
-//
-// The old model cast the true view ray into a sphere, which tied the framing to the portal's
-// on-screen angular size: far away the portal subtends a tiny angle, so it sampled a tiny cone of
-// the cubemap and looked magnified. This model builds the sample direction from the fragment's
-// position ON THE OPENING instead, so the framing is independent of viewer distance — the scene no
-// longer zooms in as you back away — and depth comes from a bounded parallax shift, not ray/sphere
-// geometry (design doc §4.1).
+// Interior-mapping parameters (design doc §4.1): the panorama is treated as a sphere of radius
+// SphereRadius centered at PortalCenter (both camera-relative). We intersect the view ray with
+// that sphere and sample by the direction from the centre to the exit point — so the portal shows
+// the forward view in the middle and the sides at the edges, with real parallax as the player moves.
 uniform vec3 PortalCenter;
-uniform vec3 PortalForward;
-uniform vec3 PortalRight;
-uniform float HalfSpan;
-uniform float Spread;
-uniform float Parallax;
+uniform float SphereRadius;
 
-in vec3 worldRel;  // camera-relative world position of this fragment on the portal plane
+in vec3 rayDir;
 
 out vec4 fragColor;
 
@@ -61,24 +45,20 @@ vec4 sampleCube(vec3 d) {
 }
 
 void main() {
-	const vec3 up = vec3(0.0, 1.0, 0.0);
+	vec3 rayFromEye = normalize(rayDir);
 
-	// Where this fragment sits on the opening, in units of HalfSpan: the larger dimension's edge is
-	// ±1.0, the shorter one is less (that asymmetry IS the cover-fit crop the postcard uses).
-	vec3 rel = worldRel - PortalCenter;
-	float lx = dot(rel, PortalRight) / HalfSpan;
-	float ly = dot(rel, up) / HalfSpan;
+	// Ray (origin = camera) vs sphere (centre = PortalCenter, radius = SphereRadius). Take the far
+	// intersection — the wall of the room behind the portal.
+	float b = dot(rayFromEye, PortalCenter);
+	float disc = b * b - (dot(PortalCenter, PortalCenter) - SphereRadius * SphereRadius);
 
-	// Base look direction: straight through the portal, fanned across the opening by Spread. No
-	// dependence on how far the eye is — the framing (and content scale) is fixed at every distance.
-	vec3 baseDir = PortalForward + PortalRight * (lx * Spread) + up * (ly * Spread);
+	vec3 dir;
+	if (disc <= 0.0) {
+		dir = rayFromEye; // degenerate (ray misses the room) — fall back to the plain view ray
+	} else {
+		float t = b + sqrt(disc);
+		dir = t * rayFromEye - PortalCenter;
+	}
 
-	// Parallax: the eye's offset from the portal centre, projected into the plane. Moving right
-	// swings the view left, like looking through a real window — depth without the telephoto zoom.
-	vec3 eyeRel = -PortalCenter;
-	float ex = dot(eyeRel, PortalRight);
-	float ey = dot(eyeRel, up);
-	vec3 dir = baseDir - PortalRight * (ex * Parallax) - up * (ey * Parallax);
-
-	fragColor = vec4(sampleCube(normalize(dir)).rgb, GlimpseAlpha);
+	fragColor = vec4(sampleCube(dir).rgb, GlimpseAlpha);
 }
