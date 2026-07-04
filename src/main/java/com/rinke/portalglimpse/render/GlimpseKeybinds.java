@@ -2,12 +2,17 @@ package com.rinke.portalglimpse.render;
 
 import org.lwjgl.glfw.GLFW;
 
+import com.rinke.portalglimpse.data.PortalRecord;
+import com.rinke.portalglimpse.data.PortalStore;
+import com.rinke.portalglimpse.detect.PortalDetection;
+
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
+import net.minecraft.client.world.ClientWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 
@@ -28,6 +33,7 @@ public final class GlimpseKeybinds {
 	private static KeyBinding toggleFadeKey;
 	private static KeyBinding radiusUpKey;
 	private static KeyBinding radiusDownKey;
+	private static KeyBinding debugPanoramaKey;
 
 	private GlimpseKeybinds() {
 	}
@@ -63,6 +69,11 @@ public final class GlimpseKeybinds {
 				InputUtil.Type.KEYSYM,
 				GLFW.GLFW_KEY_KP_2,
 				"key.categories.portal-glimpse"));
+		debugPanoramaKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+				"key.portal-glimpse.debug_panorama",
+				InputUtil.Type.KEYSYM,
+				GLFW.GLFW_KEY_K,
+				"key.categories.portal-glimpse"));
 		ClientTickEvents.END_CLIENT_TICK.register(GlimpseKeybinds::onTick);
 	}
 
@@ -97,19 +108,40 @@ public final class GlimpseKeybinds {
 					? "Postcard distance fade ON"
 					: "Postcard distance fade OFF");
 		}
-		boolean radiusChanged = false;
+		boolean depthChanged = false;
 		while (radiusUpKey.wasPressed()) {
-			GlimpseSettings.panoramaRadius = Math.min(64.0F, GlimpseSettings.panoramaRadius + 2.0F);
-			radiusChanged = true;
+			GlimpseSettings.panoramaDepth = Math.min(4.0F, GlimpseSettings.panoramaDepth + 0.25F);
+			depthChanged = true;
 		}
 		while (radiusDownKey.wasPressed()) {
-			GlimpseSettings.panoramaRadius = Math.max(2.0F, GlimpseSettings.panoramaRadius - 2.0F);
-			radiusChanged = true;
+			GlimpseSettings.panoramaDepth = Math.max(0.25F, GlimpseSettings.panoramaDepth - 0.25F);
+			depthChanged = true;
 		}
-		if (radiusChanged) {
-			actionbar(client, "Panorama room radius: " + Math.round(GlimpseSettings.panoramaRadius)
-					+ " blocks");
+		if (depthChanged) {
+			actionbar(client, String.format("Room depth: %.2f× opening width",
+					GlimpseSettings.panoramaDepth));
 		}
+		while (debugPanoramaKey.wasPressed()) {
+			toggleDebugPanorama(client);
+		}
+	}
+
+	/** Swap the nearest registered portal's panorama for the labeled debug cubemap (toggle). */
+	private static void toggleDebugPanorama(MinecraftClient client) {
+		PortalStore store = PortalDetection.store();
+		ClientWorld world = client.world;
+		if (store == null || client.player == null || world == null) {
+			return;
+		}
+		PortalRecord nearest = store.findNearest(client.player.getBlockPos(), world.getRegistryKey().getValue());
+		if (nearest == null) {
+			actionbar(client, "Debug panorama: no portal nearby");
+			return;
+		}
+		PanoramaDebug.toggle(nearest.id);
+		actionbar(client, PanoramaDebug.isTarget(nearest.id)
+				? "Debug panorama ON — nearest portal (capture it first if blank)"
+				: "Debug panorama OFF");
 	}
 
 	private static void actionbar(MinecraftClient client, String text) {

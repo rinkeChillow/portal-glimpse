@@ -22,6 +22,10 @@
 		{ "name": "ProjMat", "type": "matrix4x4", "count": 16, "values": [ 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0 ] },
 		{ "name": "GlimpseAlpha", "type": "float", "count": 1, "values": [ 1.0 ] },
 		{ "name": "PortalCenter", "type": "float", "count": 3, "values": [ 0.0, 0.0, 0.0 ] },
-		{ "name": "SphereRadius", "type": "float", "count": 1, "values": [ 8.0 ] }
+		{ "name": "PortalForward", "type": "float", "count": 3, "values": [ 0.0, 0.0, 1.0 ] },
+		{ "name": "PortalRight", "type": "float", "count": 3, "values": [ -1.0, 0.0, 0.0 ] },
+		{ "name": "HalfSpan", "type": "float", "count": 1, "values": [ 1.0 ] },
+		{ "name": "Spread", "type": "float", "count": 1, "values": [ 1.5 ] },
+		{ "name": "Parallax", "type": "float", "count": 1, "values": [ 0.15 ] }
 	]
 }

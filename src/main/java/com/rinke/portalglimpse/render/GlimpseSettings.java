@@ -16,9 +16,9 @@ public final class GlimpseSettings {
 	 * crossfade will eventually take over the close range this frees up. */
 	public static boolean proximityFade = true;
 
-	/** Interior-mapping "room" radius for the parallax panorama, in blocks (§4.1). Live-tunable
-	 * (Numpad 8/2): smaller = wider/closer view, larger = narrower/further. */
-	public static float panoramaRadius = 8.0F;
+	/** Depth of the projected "room" behind the portal, as a multiple of the opening width (§4.1).
+	 * 1.0 = a cube the size of the opening; larger = a longer tunnel. Live-tunable (Numpad 8/2). */
+	public static float panoramaDepth = 1.0F;
 
 	private GlimpseSettings() {
 	}

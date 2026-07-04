@@ -6,5 +6,6 @@
 	"key.portal-glimpse.toggle_glimpses": "Toggle Glimpses (debug)",
 	"key.portal-glimpse.toggle_fade": "Toggle Postcard Distance Fade (debug)",
 	"key.portal-glimpse.radius_up": "Panorama Room Radius + (debug)",
-	"key.portal-glimpse.radius_down": "Panorama Room Radius - (debug)"
+	"key.portal-glimpse.radius_down": "Panorama Room Radius - (debug)",
+	"key.portal-glimpse.debug_panorama": "Debug Cubemap on Nearest Portal (debug)"
 }
