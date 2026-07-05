@@ -108,18 +108,18 @@ public final class GlimpseKeybinds {
 					? "Postcard distance fade ON"
 					: "Postcard distance fade OFF");
 		}
-		boolean scaleChanged = false;
+		boolean fovChanged = false;
 		while (radiusUpKey.wasPressed()) {
-			GlimpseSettings.panoramaScale = Math.min(64.0F, GlimpseSettings.panoramaScale + 0.5F);
-			scaleChanged = true;
+			GlimpseSettings.panoramaFovDegrees = Math.min(85.0F, GlimpseSettings.panoramaFovDegrees + 5.0F);
+			fovChanged = true;
 		}
 		while (radiusDownKey.wasPressed()) {
-			GlimpseSettings.panoramaScale = Math.max(0.5F, GlimpseSettings.panoramaScale - 0.5F);
-			scaleChanged = true;
+			GlimpseSettings.panoramaFovDegrees = Math.max(20.0F, GlimpseSettings.panoramaFovDegrees - 5.0F);
+			fovChanged = true;
 		}
-		if (scaleChanged) {
-			actionbar(client, String.format("Panorama zoom: sphere = %.1f× distance (higher = wider)",
-					GlimpseSettings.panoramaScale));
+		if (fovChanged) {
+			actionbar(client, String.format("Panorama FOV: %.0f° (higher = wider / smaller content)",
+					GlimpseSettings.panoramaFovDegrees));
 		}
 		while (debugPanoramaKey.wasPressed()) {
 			toggleDebugPanorama(client);

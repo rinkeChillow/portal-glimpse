@@ -16,13 +16,12 @@ public final class GlimpseSettings {
 	 * crossfade will eventually take over the close range this frees up. */
 	public static boolean proximityFade = true;
 
-	/** Interior-mapping sphere radius as a MULTIPLE of the viewer→portal distance (§4.1). Because the
-	 * sphere grows/shrinks in lock-step with distance, the portal samples the SAME angular cone of the
-	 * panorama at every range — the content scales with the portal (like the postcard) instead of
-	 * telephoto-magnifying as you back away. Magnification ratio = (1 + scale) / scale, so higher =
-	 * wider / smaller content (→ real-world scale), lower = more zoomed but still constant.
-	 * Live-tunable (Numpad 8/2). */
-	public static float panoramaScale = 8.0F;
+	/** Half field-of-view (degrees) the portal shows of the destination panorama (§4.1). The sphere
+	 * radius is derived per-frame so the portal ALWAYS shows this same FOV regardless of distance — the
+	 * sphere SHRINKS as you back away — which keeps the destination scaling with the portal like a real
+	 * window instead of telephoto-magnifying. Higher = wider view / smaller content. Live-tunable
+	 * (Numpad 8/2). */
+	public static float panoramaFovDegrees = 55.0F;
 
 	private GlimpseSettings() {
 	}

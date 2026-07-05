@@ -5,6 +5,7 @@ import com.rinke.portalglimpse.detect.PortalDetection;
 import com.rinke.portalglimpse.render.GlimpseRenderers;
 import com.rinke.portalglimpse.render.GlimpseKeybinds;
 import com.rinke.portalglimpse.render.GlimpseWorldRendering;
+import com.rinke.portalglimpse.render.PortalArrivalGate;
 import com.rinke.portalglimpse.travel.TravelTracker;
 
 import net.fabricmc.api.ClientModInitializer;
@@ -31,6 +32,9 @@ public class PortalGlimpseClient implements ClientModInitializer {
 		// Draw glimpses on portal surfaces every frame (§4): postcard under the living veil.
 		GlimpseWorldRendering.register();
 		GlimpseKeybinds.register();
+
+		// Hide a portal's glimpse while the player is still standing in it right after teleporting in.
+		PortalArrivalGate.register();
 
 		PortalGlimpse.LOGGER.info("Portal Glimpse client ready — glimpse renderer: {}",
 				GlimpseRenderers.get().name());

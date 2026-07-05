@@ -36,6 +36,7 @@ import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 
@@ -114,9 +115,19 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				continue;
 			}
 
+			Bounds bounds = Bounds.of(record.interior);
+
+			// Fresh teleport arrival: while the player is still standing in the portal they just came
+			// through, hide its glimpse and let the plain vanilla blocks show, until they step clear —
+			// so they don't spawn clipping through the panorama plane at point-blank. Only a dimension
+			// change arms this (PortalArrivalGate), so walking UP to a portal — even stepping into it
+			// right before travelling — keeps the glimpse the whole way.
+			if (PortalArrivalGate.isArmed() && playerInsidePortal(client, bounds)) {
+				continue;
+			}
+
 			// Proximity fade (2D postcard only): distance from the camera to the nearest point of
 			// the portal plane. The veil is untouched by distance.
-			Bounds bounds = Bounds.of(record.interior);
 			double distance = bounds.distanceTo(cameraPos);
 			float fade = 1.0F;
 			if (GlimpseSettings.proximityFade) {
@@ -199,6 +210,16 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		matrices.pop();
 	}
 
+	/** True while the player's body overlaps the given portal's opening (paired with the arrival gate
+	 * to pick which portal to hide on teleport). */
+	private static boolean playerInsidePortal(MinecraftClient client, Bounds b) {
+		if (client.player == null) {
+			return false;
+		}
+		Box portal = new Box(b.minX(), b.minY(), b.minZ(), b.maxX() + 1, b.maxY() + 1, b.maxZ() + 1);
+		return client.player.getBoundingBox().intersects(portal);
+	}
+
 	/**
 	 * Draws the cubemap panorama on each nearby portal via the {@code portal_panorama} shader. Each
 	 * fragment's view ray (its camera-relative position) selects and samples one of the six faces,
@@ -254,10 +275,9 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				RenderSystem.setShaderTexture(i, pano.faces()[i]);
 			}
 			// Per-portal interior-mapping uniforms: a sphere centered on the portal (where the panorama
-			// was captured), with its radius scaled to the viewer→portal DISTANCE. Growing/shrinking
-			// the sphere in lock-step with distance keeps its on-screen size fixed relative to the
-			// portal, so the sampled angular cone — and thus the content's scale — is the same at every
-			// range. That cancels the telephoto zoom-in that a fixed radius produced when backing away.
+			// was captured). Its radius is chosen (below) so the portal shows a CONSTANT field of view
+			// of the destination at every distance — the sphere SHRINKS as you move away — so the view
+			// scales with the portal like a real window instead of telephoto-zooming when you back off.
 			Bounds b = pano.drawable().bounds();
 			float cx = (float) ((b.minX() + b.maxX() + 1) / 2.0 - cameraPos.x);
 			float cy = (float) ((b.minY() + b.maxY() + 1) / 2.0 - cameraPos.y);
@@ -269,8 +289,16 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				center.set(cx, cy, cz);
 			}
 			if (radius != null) {
+				// Constant field-of-view: solve for the sphere radius so the portal's own opening (its
+				// half-diagonal h, at distance dist) subtends the fixed half-angle FOV of the panorama.
+				//   R = h·dist / (dist·sin(FOV) − h·cos(FOV))
+				// R shrinks as dist grows (smaller sphere the further away), yet always covers the
+				// opening, so the destination scales with the portal instead of telephoto-zooming.
 				float dist = (float) Math.sqrt(cx * cx + cy * cy + cz * cz);
-				radius.set(GlimpseSettings.panoramaScale * dist);
+				float h = 0.5F * (float) Math.sqrt(b.width() * b.width() + b.height() * b.height());
+				float fov = (float) Math.toRadians(GlimpseSettings.panoramaFovDegrees);
+				float denom = Math.max(dist * (float) Math.sin(fov) - h * (float) Math.cos(fov), h * 0.02F);
+				radius.set(h * dist / denom);
 			}
 
 			boolean axisX = pano.drawable().record().axis == Direction.Axis.X;
