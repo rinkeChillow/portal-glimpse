@@ -6,6 +6,7 @@ import com.rinke.portalglimpse.render.GlimpseRenderers;
 import com.rinke.portalglimpse.render.GlimpseKeybinds;
 import com.rinke.portalglimpse.render.GlimpseWorldRendering;
 import com.rinke.portalglimpse.render.PortalArrivalGate;
+import com.rinke.portalglimpse.render.PortalTransitionView;
 import com.rinke.portalglimpse.travel.TravelTracker;
 
 import net.fabricmc.api.ClientModInitializer;
@@ -35,6 +36,9 @@ public class PortalGlimpseClient implements ClientModInitializer {
 
 		// Hide a portal's glimpse while the player is still standing in it right after teleporting in.
 		PortalArrivalGate.register();
+
+		// Remember what the player saw through the portal on entry, to show it on the loading screen.
+		PortalTransitionView.register();
 
 		PortalGlimpse.LOGGER.info("Portal Glimpse client ready — glimpse renderer: {}",
 				GlimpseRenderers.get().name());

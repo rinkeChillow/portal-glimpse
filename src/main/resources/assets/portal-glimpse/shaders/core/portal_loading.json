@@ -1,0 +1,27 @@
+{
+	"blend": {
+		"func": "add",
+		"srcrgb": "one",
+		"dstrgb": "zero"
+	},
+	"vertex": "portal-glimpse:portal_loading",
+	"fragment": "portal-glimpse:portal_loading",
+	"attributes": [
+		"Position"
+	],
+	"samplers": [
+		{ "name": "Sampler0" },
+		{ "name": "Sampler1" },
+		{ "name": "Sampler2" },
+		{ "name": "Sampler3" },
+		{ "name": "Sampler4" },
+		{ "name": "Sampler5" }
+	],
+	"uniforms": [
+		{ "name": "Forward", "type": "float", "count": 3, "values": [ 0.0, 0.0, 1.0 ] },
+		{ "name": "Right", "type": "float", "count": 3, "values": [ 1.0, 0.0, 0.0 ] },
+		{ "name": "Up", "type": "float", "count": 3, "values": [ 0.0, 1.0, 0.0 ] },
+		{ "name": "TanX", "type": "float", "count": 1, "values": [ 1.0 ] },
+		{ "name": "TanY", "type": "float", "count": 1, "values": [ 1.0 ] }
+	]
+}

@@ -41,7 +41,7 @@ public final class CaptureManager {
 	private static final int CAPTURE_RESOLUTION = 1024;
 
 	/** How far the postcard camera sits from the portal plane, in blocks. */
-	private static final double POSTCARD_DISTANCE = 2.0;
+	private static final double POSTCARD_DISTANCE = 1.0;
 
 	/** Ticks to wait after ghosting so the portal's chunk sections finish re-meshing before capture. */
 	private static final int GHOST_SETTLE_TICKS = 8;
@@ -152,7 +152,7 @@ public final class CaptureManager {
 		shots.add(new CaptureRenderer.Shot(center, 0.0F, -90.0F, "panorama_4.png"));
 		shots.add(new CaptureRenderer.Shot(center, 0.0F, 90.0F, "panorama_5.png"));
 
-		// The postcards: camera hops 2 blocks out on each side of the portal plane and shoots
+		// The postcards: camera hops 1 block out on each side of the portal plane and shoots
 		// through the (ghosted) portal. Named for the side the camera stands on — the face the
 		// postcard will be displayed on. Axis X portal spans east-west → faces north/south;
 		// axis Z spans north-south → faces east/west. (MC yaw: 0=south, 90=west, 180=north, -90=east.)

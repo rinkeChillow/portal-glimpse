@@ -1,0 +1,20 @@
+{
+	"blend": {
+		"func": "add",
+		"srcrgb": "srcalpha",
+		"dstrgb": "1-srcalpha"
+	},
+	"vertex": "portal-glimpse:portal_swirl",
+	"fragment": "portal-glimpse:portal_swirl",
+	"attributes": [
+		"Position"
+	],
+	"samplers": [
+		{ "name": "Sampler0" }
+	],
+	"uniforms": [
+		{ "name": "SpriteMin", "type": "float", "count": 2, "values": [ 0.0, 0.0 ] },
+		{ "name": "SpriteMax", "type": "float", "count": 2, "values": [ 1.0, 1.0 ] },
+		{ "name": "Alpha", "type": "float", "count": 1, "values": [ 0.4 ] }
+	]
+}
