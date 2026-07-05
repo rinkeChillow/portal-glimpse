@@ -1,9 +1,12 @@
 package com.rinke.portalglimpse.render;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 import org.joml.Matrix4fStack;
 
@@ -18,6 +21,7 @@ import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.entity.Entity;
 import net.minecraft.client.gl.GlUniform;
 import net.minecraft.client.gl.ShaderProgram;
 import net.minecraft.client.render.BufferBuilder;
@@ -61,8 +65,16 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 
 	// Veil opacity lives in GlimpseSettings (§4.3 slider) — tune in-game with Numpad 9 / 6.
 
-	/** Beyond this distance the glimpse isn't drawn at all (proper zones arrive in Phase 4). */
-	private static final double MAX_RENDER_DISTANCE_SQ = 128.0 * 128.0;
+	/** The glimpse fades out over the last (1 − fraction) of its render distance, so it's already
+	 * invisible by the cutoff instead of popping when the portal (un)loads. */
+	private static final double DISTANCE_FADE_FRACTION = 0.8;
+
+	/** How long the glimpse fades back in after teleport-arrival suppression lifts (milliseconds). */
+	private static final long ARRIVAL_FADE_MS = 500L;
+
+	/** Portal id → wall-clock time it was last suppressed by {@link PortalArrivalGate}, so the glimpse
+	 * fades back in when the player steps clear instead of popping. Render-thread only. */
+	private static final Map<UUID, Long> lastSuppressedMillis = new HashMap<>();
 
 	/** Within this distance the parallax panorama renders on the portal (§4.2 close zone). */
 	private static final double PANORAMA_DISTANCE = 32.0;
@@ -107,9 +119,6 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			if (!record.auto.hasCapture || !record.dimension.equals(dimension)) {
 				continue;
 			}
-			if (record.anchor.getSquaredDistance(cameraPos.x, cameraPos.y, cameraPos.z) > MAX_RENDER_DISTANCE_SQ) {
-				continue;
-			}
 			// A portal being ghosted for a capture must not photobomb it (§3.2 step 3).
 			if (GhostState.isActive() && GhostState.isHidden(record.interior.get(0))) {
 				continue;
@@ -117,13 +126,43 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 
 			Bounds bounds = Bounds.of(record.interior);
 
+			// Distance visibility + fade, matching vanilla ENTITY render distance (which scales with
+			// the object's size — a big portal shows from further, like a big entity). Fade the glimpse
+			// out over the last stretch so it's fully gone by the cutoff — no pop when it (un)loads.
+			double maxDist = entityRenderDistance(bounds, client);
+			double centerX = (bounds.minX() + bounds.maxX() + 1) / 2.0;
+			double centerY = (bounds.minY() + bounds.maxY() + 1) / 2.0;
+			double centerZ = (bounds.minZ() + bounds.maxZ() + 1) / 2.0;
+			double centerDist = Math.sqrt(cameraPos.squaredDistanceTo(centerX, centerY, centerZ));
+			if (centerDist >= maxDist) {
+				continue;
+			}
+			double distanceFadeStart = maxDist * DISTANCE_FADE_FRACTION;
+			float distanceFade = centerDist <= distanceFadeStart ? 1.0F
+					: (float) ((maxDist - centerDist) / (maxDist - distanceFadeStart));
+
 			// Fresh teleport arrival: while the player is still standing in the portal they just came
 			// through, hide its glimpse and let the plain vanilla blocks show, until they step clear —
 			// so they don't spawn clipping through the panorama plane at point-blank. Only a dimension
 			// change arms this (PortalArrivalGate), so walking UP to a portal — even stepping into it
 			// right before travelling — keeps the glimpse the whole way.
+			long nowMillis = System.currentTimeMillis();
 			if (PortalArrivalGate.isArmed() && playerInsidePortal(client, bounds)) {
+				lastSuppressedMillis.put(record.id, nowMillis);
 				continue;
+			}
+			// When that suppression lifts, fade the glimpse back in over ARRIVAL_FADE_MS instead of
+			// popping. Only a portal that was actually suppressed carries an entry, so glimpses that
+			// were visible all along (e.g. a distant portal) never flicker.
+			float arrivalFade = 1.0F;
+			Long suppressedAt = lastSuppressedMillis.get(record.id);
+			if (suppressedAt != null) {
+				long elapsed = nowMillis - suppressedAt;
+				if (elapsed >= ARRIVAL_FADE_MS) {
+					lastSuppressedMillis.remove(record.id);
+				} else {
+					arrivalFade = elapsed / (float) ARRIVAL_FADE_MS;
+				}
 			}
 
 			// Proximity fade (2D postcard only): distance from the camera to the nearest point of
@@ -134,7 +173,9 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				fade = (float) Math.min(1.0, Math.max(0.0,
 						(distance - FADE_END) / (FADE_START - FADE_END)));
 			}
-			int glimpseAlpha = GlimpseSettings.glimpsesVisible ? Math.round(GLIMPSE_ALPHA * fade) : 0;
+			int glimpseAlpha = GlimpseSettings.glimpsesVisible
+					? Math.round(GLIMPSE_ALPHA * fade * arrivalFade * distanceFade)
+					: 0;
 			int veilAlpha = GlimpseSettings.veilAlpha;
 
 			// Like the vanilla portal (and glass), only the face toward the viewer is visible —
@@ -170,7 +211,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 					hiddenPositions.add(pos.asLong());
 				}
 				drawables.add(new Drawable(record, texture, present, bounds, glimpseAlpha, veilAlpha,
-						viewerOnFaceA));
+						viewerOnFaceA, arrivalFade * distanceFade));
 			}
 		}
 
@@ -208,6 +249,20 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		}
 
 		matrices.pop();
+	}
+
+	/**
+	 * The distance at which this portal's glimpse should be fully gone, using the same rule vanilla
+	 * uses for entities: {@code averageSideLength × 64 × entityDistanceScaling}. So the glimpse's reach
+	 * scales with the portal's size (a big portal shows from further) and honours the player's Entity
+	 * Distance video setting. Capped at the loaded view distance so it never draws out in the fog.
+	 */
+	private static double entityRenderDistance(Bounds b, MinecraftClient client) {
+		double averageSide = ((b.maxX() + 1 - b.minX()) + (b.maxY() + 1 - b.minY())
+				+ (b.maxZ() + 1 - b.minZ())) / 3.0;
+		double entityDist = averageSide * 64.0 * Entity.getRenderDistanceMultiplier();
+		double viewDist = client.options.getClampedViewDistance() * 16.0;
+		return Math.min(entityDist, viewDist);
 	}
 
 	/** True while the player's body overlaps the given portal's opening (paired with the arrival gate
@@ -283,7 +338,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			float cy = (float) ((b.minY() + b.maxY() + 1) / 2.0 - cameraPos.y);
 			float cz = (float) ((b.minZ() + b.maxZ() + 1) / 2.0 - cameraPos.z);
 			if (alpha != null) {
-				alpha.set(1.0F);
+				alpha.set(pano.drawable().glimpseFade());
 			}
 			if (center != null) {
 				center.set(cx, cy, cz);
@@ -351,7 +406,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 
 	private record Drawable(PortalRecord record, GlimpseTextures.GlimpseTexture texture,
 			List<BlockPos> blocks, Bounds bounds, int glimpseAlpha, int veilAlpha,
-			boolean viewerOnFaceA) {
+			boolean viewerOnFaceA, float glimpseFade) {
 	}
 
 	private static void emitGlimpse(MatrixStack.Entry entry, VertexConsumerProvider consumers,
