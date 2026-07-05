@@ -354,7 +354,9 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				//   R = h·dist / (dist·sin(FOV) − h·cos(FOV))
 				// R shrinks as dist grows (smaller sphere the further away), yet always covers the
 				// opening, so the destination scales with the portal instead of telephoto-zooming.
-				float dist = (float) Math.sqrt(cx * cx + cy * cy + cz * cz);
+				// dist is the PERPENDICULAR distance to the portal plane, not to the centre point —
+				// standing below/beside a tall portal must not inflate it and delay the effect's onset.
+				float dist = Math.abs(pano.drawable().record().axis == Direction.Axis.X ? cz : cx);
 				float h = 0.5F * (float) Math.sqrt(b.width() * b.width() + b.height() * b.height());
 				float fov = (float) Math.toRadians(GlimpseSettings.panoramaFovDegrees);
 				float denom = Math.max(dist * (float) Math.sin(fov) - h * (float) Math.cos(fov), h * 0.02F);

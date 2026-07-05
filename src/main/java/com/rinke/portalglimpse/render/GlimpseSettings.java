@@ -17,11 +17,10 @@ public final class GlimpseSettings {
 	public static boolean proximityFade = true;
 
 	/** Half field-of-view (degrees) the portal shows of the destination panorama (§4.1). The sphere
-	 * radius is derived per-frame so the portal ALWAYS shows this same FOV regardless of distance — the
-	 * sphere SHRINKS as you back away — which keeps the destination scaling with the portal like a real
-	 * window instead of telephoto-magnifying. Higher = wider view / smaller content. Live-tunable
-	 * (Numpad 8/2). */
-	public static float panoramaFovDegrees = 55.0F;
+	 * radius is derived per-frame so the destination scales with the portal (no telephoto) as you move.
+	 * Higher = wider view / smaller content, and brings the scaling's onset closer (critical distance
+	 * h·cot(FOV)). Live-tunable (Numpad 8/2). */
+	public static float panoramaFovDegrees = 60.0F;
 
 	private GlimpseSettings() {
 	}
