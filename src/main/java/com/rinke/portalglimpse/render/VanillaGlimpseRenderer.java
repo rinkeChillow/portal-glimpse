@@ -247,6 +247,11 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		for (Drawable drawable : drawables) {
 			emitVeil(entry, veil, drawable, portalSprite);
 		}
+			// Flush the veil inside this event too, otherwise its buffer is drained later by vanilla,
+			// which under Fabulous graphics runs after the transparency compositing pass (swirl lost).
+			if (consumers instanceof VertexConsumerProvider.Immediate veilImmediate) {
+				veilImmediate.draw();
+			}
 
 		matrices.pop();
 	}
