@@ -22,6 +22,11 @@ public final class GlimpseSettings {
 	 * h·cot(FOV)). Live-tunable (Numpad 8/2). */
 	public static float panoramaFovDegrees = 60.0F;
 
+	/** DEBUG (Numpad 0): freeze the player in nether portals — no dimension travel and no nausea
+	 * wobble — so the in-portal glimpse behaviour can be inspected without being teleported away.
+	 * Read from the render thread and (in singleplayer) the integrated-server thread. */
+	public static volatile boolean debugBlockPortalTravel = false;
+
 	private GlimpseSettings() {
 	}
 }

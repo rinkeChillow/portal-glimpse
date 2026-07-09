@@ -76,6 +76,26 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	 * fades back in when the player steps clear instead of popping. Render-thread only. */
 	private static final Map<UUID, Long> lastSuppressedMillis = new HashMap<>();
 
+	/** Departure push: while the player stands in a portal its panorama plane is kept at least EYE_PUSH
+	 * blocks in front of the eye so they can't walk through the flat render plane and see its back. It is
+	 * a ONE-WAY ratchet (Math.max in emitPanoramaQuad): on entry the plane STAYS at the portal surface
+	 * and only recedes as the eye advances into it — never snapping toward the face. On stepping clear it
+	 * does NOT slide back; instead the pushed view FADES OUT (FADE_OUT_MS) then the on-surface view FADES
+	 * back IN (FADE_IN_MS) "to where it was" — an alpha crossfade, no swim. lastInsideMillis: portal id ->
+	 * wall-clock time last seen inside. Render-thread only. */
+	private static final float EYE_PUSH = 0.25F;
+	private static final long FADE_OUT_MS = 150L;
+	private static final long FADE_IN_MS = 200L;
+	/** Only run the exit fade-out/fade-in if the plane was still pushed at least this far (blocks) off
+	 * the surface at exit; if you'd already backed off (plane ratcheted home), just end with no fade. */
+	private static final float FADE_MIN_PUSH = 0.15F;
+	private static final Map<UUID, Long> lastInsideMillis = new HashMap<>();
+	private static final Map<UUID, Float> lastPushedDist = new HashMap<>();
+	/** Portal id -> the face (viewerOnFaceA) latched when the player ENTERED, held while inside and
+	 * through the departure fade so crossing the centre / turning around doesn't flip the panorama.
+	 * Only cleared (flip resumes) once fully outside. */
+	private static final Map<UUID, Boolean> departureFaceLatch = new HashMap<>();
+
 	/** Within this distance the parallax panorama renders on the portal (§4.2 close zone). */
 	private static final double PANORAMA_DISTANCE = 32.0;
 
@@ -91,6 +111,11 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 
 	/** Offset of the panorama just BEHIND the postcard plane (postcard sits a hair in front). */
 	private static final float PANORAMA_OFFSET = 0.002F;
+
+	/** The pushed box is the portal opening grown by this much on every side (X -> X+1), so its edges sit
+	 * inside the surrounding obsidian: hidden by the frame until the push brings them forward, and not
+	 * coplanar with the frame's inner faces (which had caused z-fighting). */
+	private static final float BOX_MARGIN = 0.5F;
 
 	/** In-block positions of the portal plane quads, matching the vanilla portal model. */
 	private static final float PLANE_LOW = 6.0F / 16.0F;
@@ -147,9 +172,70 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			// change arms this (PortalArrivalGate), so walking UP to a portal — even stepping into it
 			// right before travelling — keeps the glimpse the whole way.
 			long nowMillis = System.currentTimeMillis();
-			if (PortalArrivalGate.isArmed() && playerInsidePortal(client, bounds)) {
+			boolean playerInside = playerInsidePortal(client, bounds);
+			if (PortalArrivalGate.isArmed() && playerInside) {
 				lastSuppressedMillis.put(record.id, nowMillis);
 				continue;
+			}
+			// Which face's side the panorama renders on. Normally the live camera side (instant flip is
+			// fine OUTSIDE). But the moment you enter, latch the entry face and hold it the whole time
+			// you're inside AND through the departure fade — so crossing the centre plane or turning around
+			// never flips the panorama; the flip only resumes once you're fully back outside.
+			boolean freshFaceA = record.axis == Direction.Axis.X
+					? cameraPos.z < bounds.minZ + 0.5
+					: cameraPos.x < bounds.minX + 0.5;
+			boolean viewerOnFaceA;
+			if (playerInside) {
+				Boolean latched = departureFaceLatch.get(record.id);
+				if (latched == null) {
+					latched = freshFaceA; // lock the face you entered from
+					departureFaceLatch.put(record.id, latched);
+				}
+				viewerOnFaceA = latched;
+			} else if (lastInsideMillis.containsKey(record.id) && departureFaceLatch.containsKey(record.id)) {
+				viewerOnFaceA = departureFaceLatch.get(record.id); // hold through the exit fade
+			} else {
+				departureFaceLatch.remove(record.id);
+				viewerOnFaceA = freshFaceA;
+			}
+			// Departure: while the player's body is inside this portal (and it's not a fresh arrival,
+			// handled above) push its panorama plane to just in front of the eye — otherwise they walk
+			// through the flat render plane and see its back. On stepping clear, ONLY if the plane was still
+			// visibly pushed off the surface at that moment (you didn't first back off — the ratchet returns
+			// it to the surface as you retreat), FADE the pushed view out then FADE the on-surface view back
+			// in "to where it was"; if it was already home, end with no fade. pushAmount 1 = pushed / 0 =
+			// surface; departFade scales alpha.
+			// Push the box toward the side you entered from (derived from the locked face), NOT your look
+			// direction — so turning around keeps the box planted and reveals the overworld behind you.
+			float pushSign = viewerOnFaceA ? 1.0F : -1.0F;
+			float pushAmount = 0.0F;
+			float departFade = 1.0F;
+			if (playerInside) {
+				pushAmount = 1.0F;
+				lastInsideMillis.put(record.id, nowMillis);
+				// How far the plane is currently pushed off the surface (blocks): EYE_PUSH deep inside,
+				// falling to 0 once you back off enough that the ratchet has returned it to the surface.
+				double surfaceNormal = record.axis == Direction.Axis.X ? bounds.minZ() + 0.5 : bounds.minX() + 0.5;
+				double eyeNormal = record.axis == Direction.Axis.X ? cameraPos.z : cameraPos.x;
+				float surfaceTravel = (float) ((surfaceNormal - eyeNormal) * pushSign);
+				lastPushedDist.put(record.id, Math.max(0.0F, EYE_PUSH - surfaceTravel));
+			} else {
+				Long insideAt = lastInsideMillis.get(record.id);
+				Float pushedDist = lastPushedDist.get(record.id);
+				// Only fade if the plane was still meaningfully pushed at the moment of exit.
+				if (insideAt != null && pushedDist != null && pushedDist >= FADE_MIN_PUSH
+						&& nowMillis - insideAt < FADE_OUT_MS + FADE_IN_MS) {
+					long sinceInside = nowMillis - insideAt;
+					if (sinceInside < FADE_OUT_MS) {
+						pushAmount = 1.0F; // hold the pushed plane while its view fades out
+						departFade = 1.0F - sinceInside / (float) FADE_OUT_MS;
+					} else {
+						departFade = (sinceInside - FADE_OUT_MS) / (float) FADE_IN_MS; // fade back in at surface
+					}
+				} else {
+					lastInsideMillis.remove(record.id);
+					lastPushedDist.remove(record.id);
+				}
 			}
 			// When that suppression lifts, fade the glimpse back in over ARRIVAL_FADE_MS instead of
 			// popping. Only a portal that was actually suppressed carries an entry, so glimpses that
@@ -174,16 +260,9 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 						(distance - FADE_END) / (FADE_START - FADE_END)));
 			}
 			int glimpseAlpha = GlimpseSettings.glimpsesVisible
-					? Math.round(GLIMPSE_ALPHA * fade * arrivalFade * distanceFade)
+					? Math.round(GLIMPSE_ALPHA * fade * arrivalFade * distanceFade * departFade)
 					: 0;
 			int veilAlpha = GlimpseSettings.veilAlpha;
-
-			// Like the vanilla portal (and glass), only the face toward the viewer is visible —
-			// never the far face shining through. Pick it per frame from the camera's side of
-			// the plane. Face A = north (axis X) / west (axis Z).
-			boolean viewerOnFaceA = record.axis == Direction.Axis.X
-					? cameraPos.z < bounds.minZ + 0.5
-					: cameraPos.x < bounds.minX + 0.5;
 
 			GlimpseTextures.GlimpseTexture texture = GlimpseTextures.get(client, store.baseDir(), record);
 			if (texture == null) {
@@ -211,7 +290,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 					hiddenPositions.add(pos.asLong());
 				}
 				drawables.add(new Drawable(record, texture, present, bounds, glimpseAlpha, veilAlpha,
-						viewerOnFaceA, arrivalFade * distanceFade));
+						viewerOnFaceA, arrivalFade * distanceFade * departFade, pushAmount, pushSign));
 			}
 		}
 
@@ -360,15 +439,29 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				float h = 0.5F * (float) Math.sqrt(b.width() * b.width() + b.height() * b.height());
 				float fov = (float) Math.toRadians(GlimpseSettings.panoramaFovDegrees);
 				float denom = Math.max(dist * (float) Math.sin(fov) - h * (float) Math.cos(fov), h * 0.02F);
-				radius.set(h * dist / denom);
+				float sphereRadius = h * dist / denom;
+				if (pano.drawable().pushAmount() > 0.0F) {
+					// The plane is pushed in front of the eye; the constant-FOV sphere collapses at the
+					// portal plane (dist->0) and would discard. Grow it so the eye stays inside the sphere
+					// and the destination still renders (a skybox from within) while standing in the portal.
+					float eyeToCenter = (float) Math.sqrt(cx * cx + cy * cy + cz * cz);
+					sphereRadius = Math.max(sphereRadius, eyeToCenter + 1.0F);
+				}
+				radius.set(sphereRadius);
 			}
 
 			boolean axisX = pano.drawable().record().axis == Direction.Axis.X;
 			boolean faceA = pano.drawable().viewerOnFaceA();
 			BufferBuilder buffer = Tessellator.getInstance()
 					.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION);
-			for (BlockPos pos : pano.drawable().blocks()) {
-				emitPanoramaQuad(buffer, pos, axisX, faceA, cameraPos);
+			if (pano.drawable().pushAmount() > 0.0F) {
+				emitPanoramaBox(buffer, b, axisX, faceA, cameraPos, pano.drawable().pushAmount(),
+						pano.drawable().pushSign());
+			} else {
+				for (BlockPos pos : pano.drawable().blocks()) {
+					emitPanoramaQuad(buffer, pos, axisX, faceA, cameraPos, pano.drawable().pushAmount(),
+							pano.drawable().pushSign());
+				}
 			}
 			BuiltBuffer built = buffer.endNullable();
 			if (built != null) {
@@ -386,14 +479,19 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 
 	/** One portal-plane quad in camera-relative space (POSITION only; the shader does the rest). */
 	private static void emitPanoramaQuad(BufferBuilder buffer, BlockPos pos, boolean axisX, boolean faceA,
-			Vec3d cam) {
+			Vec3d cam, float pushAmount, float pushSign) {
 		float y0 = (float) (pos.getY() - cam.y);
 		float y1 = (float) (pos.getY() + 1 - cam.y);
 		// Push the panorama plane away from the camera (behind the postcard) — faceA looks toward
 		// -axis, faceB toward +axis, so "away" flips sign with the face.
 		float back = faceA ? PANORAMA_OFFSET : -PANORAMA_OFFSET;
 		if (axisX) {
-			float plane = (float) ((faceA ? pos.getZ() + PLANE_LOW : pos.getZ() + PLANE_HIGH) + back - cam.z);
+			float surface = (float) ((faceA ? pos.getZ() + PLANE_LOW : pos.getZ() + PLANE_HIGH) + back - cam.z);
+			// One-way push: hold at the portal surface until the eye closes within EYE_PUSH, then stay
+			// EYE_PUSH ahead. Math.max makes it a ratchet — entering never snaps it toward the face, it
+			// only ever recedes; pushAmount eases it back to the surface on exit.
+			float ratchet = Math.max(surface * pushSign, EYE_PUSH) * pushSign;
+			float plane = surface + (ratchet - surface) * pushAmount;
 			float xa = (float) (pos.getX() - cam.x);
 			float xb = (float) (pos.getX() + 1 - cam.x);
 			buffer.vertex(xa, y1, plane);
@@ -401,7 +499,9 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			buffer.vertex(xb, y0, plane);
 			buffer.vertex(xb, y1, plane);
 		} else {
-			float plane = (float) ((faceA ? pos.getX() + PLANE_LOW : pos.getX() + PLANE_HIGH) + back - cam.x);
+			float surface = (float) ((faceA ? pos.getX() + PLANE_LOW : pos.getX() + PLANE_HIGH) + back - cam.x);
+			float ratchet = Math.max(surface * pushSign, EYE_PUSH) * pushSign;
+			float plane = surface + (ratchet - surface) * pushAmount;
 			float za = (float) (pos.getZ() - cam.z);
 			float zb = (float) (pos.getZ() + 1 - cam.z);
 			buffer.vertex(plane, y1, za);
@@ -411,9 +511,61 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		}
 	}
 
+	/**
+	 * The pushed panorama "box": one back face at the pushed plane plus four perpendicular side walls
+	 * down to the portal opening. The whole box is the opening grown by BOX_MARGIN on every side (X ->
+	 * X+1), so its edges sit inside the surrounding obsidian: occluded by the frame until the push brings
+	 * them forward, then wrapping the player's peripheral view instead of leaving a gap to the outside
+	 * world past the edge. POSITION-only; the shader samples the same sphere on every face.
+	 */
+	private static void emitPanoramaBox(BufferBuilder buffer, Bounds b, boolean axisX, boolean faceA,
+			Vec3d cam, float pushAmount, float pushSign) {
+		float m = BOX_MARGIN;
+		float back = faceA ? PANORAMA_OFFSET : -PANORAMA_OFFSET;
+		float y0 = (float) (b.minY() - m - cam.y);
+		float y1 = (float) (b.maxY() + 1 + m - cam.y);
+		if (axisX) {
+			float surface = (float) ((faceA ? b.minZ() + PLANE_LOW : b.minZ() + PLANE_HIGH) + back - cam.z);
+			float ratchet = Math.max(surface * pushSign, EYE_PUSH) * pushSign;
+			float pushed = surface + (ratchet - surface) * pushAmount;
+			float x0 = (float) (b.minX() - m - cam.x);
+			float x1 = (float) (b.maxX() + 1 + m - cam.x);
+			quad(buffer, x0, y0, pushed, x1, y0, pushed, x1, y1, pushed, x0, y1, pushed); // back face
+			if (Math.abs(pushed - surface) >= 1.0e-3F) { // walls only once the push gives real depth
+				quad(buffer, x0, y0, surface, x0, y1, surface, x0, y1, pushed, x0, y0, pushed); // left
+				quad(buffer, x1, y0, surface, x1, y1, surface, x1, y1, pushed, x1, y0, pushed); // right
+				quad(buffer, x0, y0, surface, x1, y0, surface, x1, y0, pushed, x0, y0, pushed); // bottom
+				quad(buffer, x0, y1, surface, x1, y1, surface, x1, y1, pushed, x0, y1, pushed); // top
+			}
+		} else {
+			float surface = (float) ((faceA ? b.minX() + PLANE_LOW : b.minX() + PLANE_HIGH) + back - cam.x);
+			float ratchet = Math.max(surface * pushSign, EYE_PUSH) * pushSign;
+			float pushed = surface + (ratchet - surface) * pushAmount;
+			float z0 = (float) (b.minZ() - m - cam.z);
+			float z1 = (float) (b.maxZ() + 1 + m - cam.z);
+			quad(buffer, pushed, y0, z0, pushed, y0, z1, pushed, y1, z1, pushed, y1, z0); // back face
+			if (Math.abs(pushed - surface) >= 1.0e-3F) {
+				quad(buffer, surface, y0, z0, surface, y1, z0, pushed, y1, z0, pushed, y0, z0); // near-Z
+				quad(buffer, surface, y0, z1, surface, y1, z1, pushed, y1, z1, pushed, y0, z1); // far-Z
+				quad(buffer, surface, y0, z0, surface, y0, z1, pushed, y0, z1, pushed, y0, z0); // bottom
+				quad(buffer, surface, y1, z0, surface, y1, z1, pushed, y1, z1, pushed, y1, z0); // top
+			}
+		}
+	}
+
+	/** Emit one POSITION-only quad (4 corners a,b,c,d) into the panorama buffer. */
+	private static void quad(BufferBuilder buffer,
+			float ax, float ay, float az, float bx, float by, float bz,
+			float cornerCx, float cornerCy, float cornerCz, float dx, float dy, float dz) {
+		buffer.vertex(ax, ay, az);
+		buffer.vertex(bx, by, bz);
+		buffer.vertex(cornerCx, cornerCy, cornerCz);
+		buffer.vertex(dx, dy, dz);
+	}
+
 	private record Drawable(PortalRecord record, GlimpseTextures.GlimpseTexture texture,
 			List<BlockPos> blocks, Bounds bounds, int glimpseAlpha, int veilAlpha,
-			boolean viewerOnFaceA, float glimpseFade) {
+			boolean viewerOnFaceA, float glimpseFade, float pushAmount, float pushSign) {
 	}
 
 	private static void emitGlimpse(MatrixStack.Entry entry, VertexConsumerProvider consumers,

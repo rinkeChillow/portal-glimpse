@@ -1,8 +1,8 @@
 {
 	"blend": {
 		"func": "add",
-		"srcrgb": "one",
-		"dstrgb": "zero"
+		"srcrgb": "srcalpha",
+		"dstrgb": "1-srcalpha"
 	},
 	"vertex": "portal-glimpse:portal_loading",
 	"fragment": "portal-glimpse:portal_loading",
@@ -22,6 +22,7 @@
 		{ "name": "Right", "type": "float", "count": 3, "values": [ 1.0, 0.0, 0.0 ] },
 		{ "name": "Up", "type": "float", "count": 3, "values": [ 0.0, 1.0, 0.0 ] },
 		{ "name": "TanX", "type": "float", "count": 1, "values": [ 1.0 ] },
-		{ "name": "TanY", "type": "float", "count": 1, "values": [ 1.0 ] }
+		{ "name": "TanY", "type": "float", "count": 1, "values": [ 1.0 ] },
+		{ "name": "Alpha", "type": "float", "count": 1, "values": [ 1.0 ] }
 	]
 }

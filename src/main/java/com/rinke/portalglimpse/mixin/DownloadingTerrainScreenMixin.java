@@ -29,6 +29,12 @@ public class DownloadingTerrainScreenMixin {
 	private void portalglimpse$holdForCapture(CallbackInfo ci) {
 		if (TravelTracker.shouldHoldLoadingScreen() || PortalTransitionView.shouldHoldForDebug()) {
 			ci.cancel();
+			return;
+		}
+		// Every mandatory hold has cleared — instead of letting the screen close instantly, hold it a
+		// little longer while the backdrop panorama fades out smoothly (Phase 4.9).
+		if (PortalTransitionView.tickClosingFade()) {
+			ci.cancel();
 		}
 	}
 

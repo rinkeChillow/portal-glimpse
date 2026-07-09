@@ -6,6 +6,7 @@ import com.rinke.portalglimpse.render.GlimpseRenderers;
 import com.rinke.portalglimpse.render.GlimpseKeybinds;
 import com.rinke.portalglimpse.render.GlimpseWorldRendering;
 import com.rinke.portalglimpse.render.PortalArrivalGate;
+import com.rinke.portalglimpse.render.PortalArrivalVeil;
 import com.rinke.portalglimpse.render.PortalTransitionView;
 import com.rinke.portalglimpse.travel.TravelTracker;
 
@@ -39,6 +40,10 @@ public class PortalGlimpseClient implements ClientModInitializer {
 
 		// Remember what the player saw through the portal on entry, to show it on the loading screen.
 		PortalTransitionView.register();
+
+		// Phase 4.9: keep the portal swirl up as a full-screen overlay after the loading screen closes,
+		// fading it out only once the player physically steps clear of the arrival portal.
+		PortalArrivalVeil.register();
 
 		PortalGlimpse.LOGGER.info("Portal Glimpse client ready — glimpse renderer: {}",
 				GlimpseRenderers.get().name());

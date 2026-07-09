@@ -9,6 +9,10 @@ uniform sampler2D Sampler3;
 uniform sampler2D Sampler4;
 uniform sampler2D Sampler5;
 
+// Backdrop opacity — 1.0 while holding, ramping to 0.0 over the closing fade (Phase 4.9) so the
+// destination view dissolves into the real (already-loaded) world instead of cutting away.
+uniform float Alpha;
+
 in vec3 rayDir;
 
 out vec4 fragColor;
@@ -36,5 +40,5 @@ vec4 sampleCube(vec3 d) {
 }
 
 void main() {
-	fragColor = vec4(sampleCube(normalize(rayDir)).rgb, 1.0);
+	fragColor = vec4(sampleCube(normalize(rayDir)).rgb, Alpha);
 }

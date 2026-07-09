@@ -33,6 +33,11 @@ public final class PortalTransitionView {
 	/** Drop the active backdrop this many ticks after the loading screen is gone. */
 	private static final int CLEAR_AFTER_TICKS = 10;
 
+	/** How long (ticks) the backdrop panorama takes to fade out once the loading screen is actually
+	 * done, instead of cutting away instantly (Phase 4.9). The swirl veil is unaffected — it keeps
+	 * spinning at its own opacity through and after this fade. */
+	private static final int CLOSE_FADE_TICKS = 12;
+
 	// Candidate — refreshed each tick while standing in a captured portal (origin side).
 	private static Identifier[] candidateFaces;
 	private static float candidateYaw;
@@ -55,6 +60,10 @@ public final class PortalTransitionView {
 	/** DEBUG: while a backdrop is active the loading screen is held open until Numpad 5 is pressed, so
 	 * the view can be inspected instead of flashing past. Temporary testing aid. */
 	private static volatile boolean debugReleased;
+
+	/** Ticks left in the closing fade, or -1 when not fading (§Phase 4.9). Counts down from
+	 * {@link #CLOSE_FADE_TICKS} to 0 once every mandatory hold has cleared. */
+	private static int closeFadeTicksLeft = -1;
 
 	private PortalTransitionView() {
 	}
@@ -90,6 +99,36 @@ public final class PortalTransitionView {
 	/** DEBUG: true while the loading screen should be held open waiting for Numpad 5. */
 	public static boolean shouldHoldForDebug() {
 		return active && activeFaces != null && !debugReleased;
+	}
+
+	/**
+	 * Call once every mandatory hold on the loading screen has cleared. Ramps the backdrop out over
+	 * {@link #CLOSE_FADE_TICKS} instead of vanishing the instant the screen is allowed to close.
+	 * Returns true while the fade is still running (the caller should keep holding the screen open);
+	 * once it finishes the backdrop is cleared and this returns false, letting the screen proceed.
+	 */
+	public static boolean tickClosingFade() {
+		if (!active || activeFaces == null) {
+			closeFadeTicksLeft = -1;
+			return false;
+		}
+		if (closeFadeTicksLeft < 0) {
+			closeFadeTicksLeft = CLOSE_FADE_TICKS;
+		}
+		if (closeFadeTicksLeft == 0) {
+			active = false;
+			activeFaces = null;
+			closeFadeTicksLeft = -1;
+			return false;
+		}
+		closeFadeTicksLeft--;
+		return true;
+	}
+
+	/** Backdrop opacity: 1.0 while holding, ramping to 0.0 over the closing fade. The swirl veil
+	 * drawn over it is untouched — only the destination view underneath dissolves. */
+	public static float backdropAlpha() {
+		return closeFadeTicksLeft < 0 ? 1.0F : closeFadeTicksLeft / (float) CLOSE_FADE_TICKS;
 	}
 
 	/**
@@ -193,6 +232,7 @@ public final class PortalTransitionView {
 		activeFaces = candidateFaces;
 		activeFov = candidateFov;
 		clearGrace = 0;
+		closeFadeTicksLeft = -1; // fresh backdrop starts fully opaque, not mid-fade
 		debugReleased = false; // hold the loading screen open for inspection until Numpad 5
 		active = true;
 	}

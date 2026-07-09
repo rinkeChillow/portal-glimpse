@@ -34,6 +34,7 @@ public final class GlimpseKeybinds {
 	private static KeyBinding radiusUpKey;
 	private static KeyBinding radiusDownKey;
 	private static KeyBinding debugPanoramaKey;
+	private static KeyBinding blockTravelKey;
 
 	private GlimpseKeybinds() {
 	}
@@ -73,6 +74,11 @@ public final class GlimpseKeybinds {
 				"key.portal-glimpse.debug_panorama",
 				InputUtil.Type.KEYSYM,
 				GLFW.GLFW_KEY_K,
+				"key.categories.portal-glimpse"));
+		blockTravelKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+				"key.portal-glimpse.block_travel",
+				InputUtil.Type.KEYSYM,
+				GLFW.GLFW_KEY_KP_0,
 				"key.categories.portal-glimpse"));
 		ClientTickEvents.END_CLIENT_TICK.register(GlimpseKeybinds::onTick);
 	}
@@ -123,6 +129,18 @@ public final class GlimpseKeybinds {
 		}
 		while (debugPanoramaKey.wasPressed()) {
 			toggleDebugPanorama(client);
+		}
+		while (blockTravelKey.wasPressed()) {
+			GlimpseSettings.debugBlockPortalTravel = !GlimpseSettings.debugBlockPortalTravel;
+			actionbar(client, GlimpseSettings.debugBlockPortalTravel
+					? "Portal travel BLOCKED — stand in the portal to inspect (no teleport, no nausea)"
+					: "Portal travel restored");
+		}
+		// While travel is blocked, keep the client's portal-nausea wobble pinned at zero so the view
+		// stays clear even if any lingering portal state tries to ramp it up.
+		if (GlimpseSettings.debugBlockPortalTravel && client.player != null) {
+			client.player.nauseaIntensity = 0.0F;
+			client.player.prevNauseaIntensity = 0.0F;
 		}
 	}
 

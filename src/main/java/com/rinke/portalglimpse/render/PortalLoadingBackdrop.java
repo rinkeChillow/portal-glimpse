@@ -42,7 +42,7 @@ public final class PortalLoadingBackdrop {
 		if (!drawBackdrop(client)) {
 			return false;
 		}
-		drawSwirl(client);
+		drawSwirl(client, 1.0F);
 		int cx = context.getScaledWindowWidth() / 2;
 		int cy = context.getScaledWindowHeight() / 2 - 50;
 		context.drawCenteredTextWithShadow(client.textRenderer, LOADING_TEXT, cx, cy, 0xFFFFFF);
@@ -67,7 +67,8 @@ public final class PortalLoadingBackdrop {
 		float tanX = tanY * aspect;
 
 		RenderSystem.disableCull();
-		RenderSystem.disableBlend();
+		RenderSystem.enableBlend();
+		RenderSystem.defaultBlendFunc();
 		RenderSystem.disableDepthTest();
 		RenderSystem.depthMask(false);
 		for (int i = 0; i < 6; i++) {
@@ -88,6 +89,13 @@ public final class PortalLoadingBackdrop {
 		GlUniform ty = shader.getUniform("TanY");
 		if (ty != null) {
 			ty.set(tanY);
+		}
+		GlUniform alpha = shader.getUniform("Alpha");
+		if (alpha != null) {
+			// Dissolves the destination view into the real (already-loaded) world behind it once the
+			// loading screen is done, instead of cutting away instantly (Phase 4.9). The swirl veil
+			// drawn afterwards keeps its own opacity regardless.
+			alpha.set(PortalTransitionView.backdropAlpha());
 		}
 
 		BufferBuilder buffer = Tessellator.getInstance()
@@ -117,8 +125,13 @@ public final class PortalLoadingBackdrop {
 		}
 	}
 
-	/** The translucent animated portal swirl tiled over the backdrop — the loading-screen veil. */
-	private static void drawSwirl(MinecraftClient client) {
+	/**
+	 * The translucent animated portal swirl tiled full-screen — the loading-screen veil, and (via
+	 * {@link PortalArrivalVeil}) the same swirl kept alive after the screen closes until the player
+	 * steps clear of the arrival portal (Phase 4.9). {@code extraAlpha} layers on top of the veil's
+	 * own opacity setting, e.g. for the arrival fade-out.
+	 */
+	static void drawSwirl(MinecraftClient client, float extraAlpha) {
 		ShaderProgram shader = PortalShaders.swirl();
 		if (shader == null) {
 			return;
@@ -140,7 +153,7 @@ public final class PortalLoadingBackdrop {
 		if (alpha != null) {
 			// Match the in-world portal veil opacity (Numpad 9/6 / Phase-5 config) so the loading
 			// screen's veil always tracks the same setting.
-			alpha.set(GlimpseSettings.veilAlpha / 255.0F);
+			alpha.set(GlimpseSettings.veilAlpha / 255.0F * extraAlpha);
 		}
 
 		BufferBuilder buffer = Tessellator.getInstance()

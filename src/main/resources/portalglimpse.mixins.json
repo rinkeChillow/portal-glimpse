@@ -2,7 +2,9 @@
 	"required": true,
 	"package": "com.rinke.portalglimpse.mixin",
 	"compatibilityLevel": "JAVA_21",
-	"mixins": [],
+	"mixins": [
+		"EntityPortalMixin"
+	],
 	"client": [
 		"BillboardParticleMixin",
 		"CameraMixin",
