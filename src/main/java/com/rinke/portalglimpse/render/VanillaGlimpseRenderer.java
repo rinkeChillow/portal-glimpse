@@ -95,6 +95,12 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	 * through the departure fade so crossing the centre / turning around doesn't flip the panorama.
 	 * Only cleared (flip resumes) once fully outside. */
 	private static final Map<UUID, Boolean> departureFaceLatch = new HashMap<>();
+	/** Portal id -> current encasement (0..1): as the teleport swirl (nausea) builds while you stand in
+	 * the portal, the destination panorama also fades in on the OTHER side, wrapping you until fully
+	 * encased at teleport. Rises with the swirl; fades out fast when you step clear. Render-thread only. */
+	private static final Map<UUID, Float> encasementMap = new HashMap<>();
+	/** Per-frame ease for the encasement fade-OUT when you leave (fade-in tracks the nausea directly). */
+	private static final float ENCASE_FADE_OUT = 0.35F;
 
 	/** Within this distance the parallax panorama renders on the portal (§4.2 close zone). */
 	private static final double PANORAMA_DISTANCE = 32.0;
@@ -237,6 +243,27 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 					lastPushedDist.remove(record.id);
 				}
 			}
+			// Encasement: as the teleport swirl (nausea) builds while you stand in the portal, the destination
+			// panorama ALSO fades in on the OTHER side, wrapping around you until it fully encases you at the
+			// moment of teleport. Fade-IN tracks the swirl (nausea rises slowly); stepping out collapses the
+			// swirl so it fades OUT fast.
+			float encaseTarget = playerInside && client.player != null
+					? Math.max(0.0F, Math.min(1.0F, client.player.nauseaIntensity))
+					: 0.0F;
+			float encasement = encasementMap.getOrDefault(record.id, 0.0F);
+			if (encaseTarget >= encasement) {
+				encasement = encaseTarget;
+			} else {
+				encasement += (encaseTarget - encasement) * ENCASE_FADE_OUT;
+				if (encasement < 0.01F) {
+					encasement = 0.0F;
+				}
+			}
+			if (encasement <= 0.0F) {
+				encasementMap.remove(record.id);
+			} else {
+				encasementMap.put(record.id, encasement);
+			}
 			// When that suppression lifts, fade the glimpse back in over ARRIVAL_FADE_MS instead of
 			// popping. Only a portal that was actually suppressed carries an entry, so glimpses that
 			// were visible all along (e.g. a distant portal) never flicker.
@@ -290,7 +317,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 					hiddenPositions.add(pos.asLong());
 				}
 				drawables.add(new Drawable(record, texture, present, bounds, glimpseAlpha, veilAlpha,
-						viewerOnFaceA, arrivalFade * distanceFade * departFade, pushAmount, pushSign));
+						viewerOnFaceA, arrivalFade * distanceFade * departFade, pushAmount, pushSign, encasement));
 			}
 		}
 
@@ -467,6 +494,20 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			if (built != null) {
 				BufferRenderer.drawWithGlobalProgram(built);
 			}
+
+			// Encasement: the destination ALSO wrapping in from the OTHER side (opposite face, pushed the
+			// opposite way) as the teleport swirl builds — fading in until it fully surrounds you.
+			float encasement = pano.drawable().encasement();
+			if (encasement > 0.0F && alpha != null) {
+				alpha.set(encasement);
+				BufferBuilder encBuffer = Tessellator.getInstance()
+						.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION);
+				emitPanoramaBox(encBuffer, b, axisX, !faceA, cameraPos, 1.0F, -pano.drawable().pushSign());
+				BuiltBuffer encBuilt = encBuffer.endNullable();
+				if (encBuilt != null) {
+					BufferRenderer.drawWithGlobalProgram(encBuilt);
+				}
+			}
 		}
 
 		RenderSystem.enableCull();
@@ -565,7 +606,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 
 	private record Drawable(PortalRecord record, GlimpseTextures.GlimpseTexture texture,
 			List<BlockPos> blocks, Bounds bounds, int glimpseAlpha, int veilAlpha,
-			boolean viewerOnFaceA, float glimpseFade, float pushAmount, float pushSign) {
+			boolean viewerOnFaceA, float glimpseFade, float pushAmount, float pushSign, float encasement) {
 	}
 
 	private static void emitGlimpse(MatrixStack.Entry entry, VertexConsumerProvider consumers,
