@@ -122,6 +122,10 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	 * inside the surrounding obsidian: hidden by the frame until the push brings them forward, and not
 	 * coplanar with the frame's inner faces (which had caused z-fighting). */
 	private static final float BOX_MARGIN = 0.5F;
+	/** When a solid block sits in front of a portal's base (e.g. grass), the pushed box's downward margin
+	 * would clip through it. Instead lift that box's bottom to this height above the opening bottom
+	 * (~1.1 above the block's base) so it clears the block: no z-fight, no poke-through. */
+	private static final float BOTTOM_LIFT = 0.11F;
 
 	/** In-block positions of the portal plane quads, matching the vanilla portal model. */
 	private static final float PLANE_LOW = 6.0F / 16.0F;
@@ -483,7 +487,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 					.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION);
 			if (pano.drawable().pushAmount() > 0.0F) {
 				emitPanoramaBox(buffer, b, axisX, faceA, cameraPos, pano.drawable().pushAmount(),
-						pano.drawable().pushSign());
+						pano.drawable().pushSign(), client.world);
 			} else {
 				for (BlockPos pos : pano.drawable().blocks()) {
 					emitPanoramaQuad(buffer, pos, axisX, faceA, cameraPos, pano.drawable().pushAmount(),
@@ -502,7 +506,8 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				alpha.set(encasement);
 				BufferBuilder encBuffer = Tessellator.getInstance()
 						.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION);
-				emitPanoramaBox(encBuffer, b, axisX, !faceA, cameraPos, 1.0F, -pano.drawable().pushSign());
+				emitPanoramaBox(encBuffer, b, axisX, !faceA, cameraPos, 1.0F, -pano.drawable().pushSign(),
+						client.world);
 				BuiltBuffer encBuilt = encBuffer.endNullable();
 				if (encBuilt != null) {
 					BufferRenderer.drawWithGlobalProgram(encBuilt);
@@ -552,44 +557,78 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		}
 	}
 
+	/** True if any solid block sits along a portal edge's frame line, one block out on the destination
+	 * side — a block that would poke through the pushed box on that side. Axes 0=X,1=Y,2=Z: the edge frame
+	 * sits at frameAxis=frameCoord, the destination neighbour at normalAxis=normalCoord, scanned along
+	 * spanAxis from spanMin..spanMax. */
+	private static boolean sideObstructed(ClientWorld world, int frameAxis, int frameCoord,
+			int normalAxis, int normalCoord, int spanAxis, int spanMin, int spanMax) {
+		BlockPos.Mutable pos = new BlockPos.Mutable();
+		int[] bp = new int[3];
+		bp[frameAxis] = frameCoord;
+		bp[normalAxis] = normalCoord;
+		for (int s = spanMin; s <= spanMax; s++) {
+			bp[spanAxis] = s;
+			if (world.getBlockState(pos.set(bp[0], bp[1], bp[2])).isSolidBlock(world, pos)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/**
 	 * The pushed panorama "box": one back face at the pushed plane plus four perpendicular side walls
-	 * down to the portal opening. The whole box is the opening grown by BOX_MARGIN on every side (X ->
-	 * X+1), so its edges sit inside the surrounding obsidian: occluded by the frame until the push brings
-	 * them forward, then wrapping the player's peripheral view instead of leaving a gap to the outside
-	 * world past the edge. POSITION-only; the shader samples the same sphere on every face.
+	 * down to the portal opening, grown by BOX_MARGIN on every side so its edges sit inside the obsidian.
+	 * Any side with a solid block in front of its frame (sideObstructed) has that edge pushed INWARD to
+	 * clear the block and its wall MASKED per-cell so the obsidian ledge stays exposed while other blocks
+	 * stay covered. POSITION-only; the shader samples the same sphere on every face.
 	 */
+
 	private static void emitPanoramaBox(BufferBuilder buffer, Bounds b, boolean axisX, boolean faceA,
-			Vec3d cam, float pushAmount, float pushSign) {
+			Vec3d cam, float pushAmount, float pushSign, ClientWorld world) {
 		float m = BOX_MARGIN;
 		float back = faceA ? PANORAMA_OFFSET : -PANORAMA_OFFSET;
-		float y0 = (float) (b.minY() - m - cam.y);
-		float y1 = (float) (b.maxY() + 1 + m - cam.y);
 		if (axisX) {
 			float surface = (float) ((faceA ? b.minZ() + PLANE_LOW : b.minZ() + PLANE_HIGH) + back - cam.z);
 			float ratchet = Math.max(surface * pushSign, EYE_PUSH) * pushSign;
 			float pushed = surface + (ratchet - surface) * pushAmount;
-			float x0 = (float) (b.minX() - m - cam.x);
-			float x1 = (float) (b.maxX() + 1 + m - cam.x);
+			int frontZ = pushSign > 0.0F ? b.maxZ() + 1 : b.minZ() - 1; // one block out on the destination side
+			boolean oBottom = sideObstructed(world, 1, b.minY() - 1, 2, frontZ, 0, b.minX(), b.maxX());
+			boolean oTop = sideObstructed(world, 1, b.maxY() + 1, 2, frontZ, 0, b.minX(), b.maxX());
+			boolean oLeft = sideObstructed(world, 0, b.minX() - 1, 2, frontZ, 1, b.minY(), b.maxY());
+			boolean oRight = sideObstructed(world, 0, b.maxX() + 1, 2, frontZ, 1, b.minY(), b.maxY());
+			float y0 = (float) ((oBottom ? b.minY() + BOTTOM_LIFT : b.minY() - m) - cam.y);
+			float y1 = (float) ((oTop ? b.maxY() + 1 - BOTTOM_LIFT : b.maxY() + 1 + m) - cam.y);
+			float x0 = (float) ((oLeft ? b.minX() + BOTTOM_LIFT : b.minX() - m) - cam.x);
+			float x1 = (float) ((oRight ? b.maxX() + 1 - BOTTOM_LIFT : b.maxX() + 1 + m) - cam.x);
 			quad(buffer, x0, y0, pushed, x1, y0, pushed, x1, y1, pushed, x0, y1, pushed); // back face
 			if (Math.abs(pushed - surface) >= 1.0e-3F) { // walls only once the push gives real depth
-				quad(buffer, x0, y0, surface, x0, y1, surface, x0, y1, pushed, x0, y0, pushed); // left
-				quad(buffer, x1, y0, surface, x1, y1, surface, x1, y1, pushed, x1, y0, pushed); // right
-				quad(buffer, x0, y0, surface, x1, y0, surface, x1, y0, pushed, x0, y0, pushed); // bottom
-				quad(buffer, x0, y1, surface, x1, y1, surface, x1, y1, pushed, x0, y1, pushed); // top
+				double zLo = Math.min(surface, pushed) + cam.z, zHi = Math.max(surface, pushed) + cam.z;
+				emitWall(buffer, world, cam, oLeft, 0, x0, b.minX() - 1, 1, y0 + cam.y, y1 + cam.y, 2, zLo, zHi);
+				emitWall(buffer, world, cam, oRight, 0, x1, b.maxX() + 1, 1, y0 + cam.y, y1 + cam.y, 2, zLo, zHi);
+				emitWall(buffer, world, cam, oBottom, 1, y0, b.minY() - 1, 0, x0 + cam.x, x1 + cam.x, 2, zLo, zHi);
+				emitWall(buffer, world, cam, oTop, 1, y1, b.maxY() + 1, 0, x0 + cam.x, x1 + cam.x, 2, zLo, zHi);
 			}
 		} else {
 			float surface = (float) ((faceA ? b.minX() + PLANE_LOW : b.minX() + PLANE_HIGH) + back - cam.x);
 			float ratchet = Math.max(surface * pushSign, EYE_PUSH) * pushSign;
 			float pushed = surface + (ratchet - surface) * pushAmount;
-			float z0 = (float) (b.minZ() - m - cam.z);
-			float z1 = (float) (b.maxZ() + 1 + m - cam.z);
+			int frontX = pushSign > 0.0F ? b.maxX() + 1 : b.minX() - 1;
+			boolean oBottom = sideObstructed(world, 1, b.minY() - 1, 0, frontX, 2, b.minZ(), b.maxZ());
+			boolean oTop = sideObstructed(world, 1, b.maxY() + 1, 0, frontX, 2, b.minZ(), b.maxZ());
+			boolean oLeft = sideObstructed(world, 2, b.minZ() - 1, 0, frontX, 1, b.minY(), b.maxY());
+			boolean oRight = sideObstructed(world, 2, b.maxZ() + 1, 0, frontX, 1, b.minY(), b.maxY());
+			float y0 = (float) ((oBottom ? b.minY() + BOTTOM_LIFT : b.minY() - m) - cam.y);
+			float y1 = (float) ((oTop ? b.maxY() + 1 - BOTTOM_LIFT : b.maxY() + 1 + m) - cam.y);
+			float z0 = (float) ((oLeft ? b.minZ() + BOTTOM_LIFT : b.minZ() - m) - cam.z);
+			float z1 = (float) ((oRight ? b.maxZ() + 1 - BOTTOM_LIFT : b.maxZ() + 1 + m) - cam.z);
 			quad(buffer, pushed, y0, z0, pushed, y0, z1, pushed, y1, z1, pushed, y1, z0); // back face
 			if (Math.abs(pushed - surface) >= 1.0e-3F) {
-				quad(buffer, surface, y0, z0, surface, y1, z0, pushed, y1, z0, pushed, y0, z0); // near-Z
-				quad(buffer, surface, y0, z1, surface, y1, z1, pushed, y1, z1, pushed, y0, z1); // far-Z
-				quad(buffer, surface, y0, z0, surface, y0, z1, pushed, y0, z1, pushed, y0, z0); // bottom
-				quad(buffer, surface, y1, z0, surface, y1, z1, pushed, y1, z1, pushed, y1, z0); // top
+				double xLo = Math.min(surface, pushed) + cam.x, xHi = Math.max(surface, pushed) + cam.x;
+				emitWall(buffer, world, cam, oLeft, 2, z0, b.minZ() - 1, 1, y0 + cam.y, y1 + cam.y, 0, xLo, xHi);
+				emitWall(buffer, world, cam, oRight, 2, z1, b.maxZ() + 1, 1, y0 + cam.y, y1 + cam.y, 0, xLo, xHi);
+				emitWall(buffer, world, cam, oBottom, 1, y0, b.minY() - 1, 2, z0 + cam.z, z1 + cam.z, 0, xLo, xHi);
+				emitWall(buffer, world, cam, oTop, 1, y1, b.maxY() + 1, 2, z0 + cam.z, z1 + cam.z, 0, xLo, xHi);
 			}
 		}
 	}
@@ -602,6 +641,51 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		buffer.vertex(bx, by, bz);
 		buffer.vertex(cornerCx, cornerCy, cornerCz);
 		buffer.vertex(dx, dy, dz);
+	}
+
+	/** Emit one box wall: a rectangle in the plane perpendicular to constAxis at wallCamRel, spanning
+	 * uAxis[uMinW,uMaxW] x vAxis[vMinW,vMaxW] (camera-relative from those world ranges). If masked, emit
+	 * per block-cell and SKIP cells whose frame block (constAxis=frameCoord) is obsidian — keeping the
+	 * obsidian ledge exposed while other blocks stay covered. Axes: 0=X, 1=Y, 2=Z. */
+	private static void emitWall(BufferBuilder buffer, ClientWorld world, Vec3d cam, boolean masked,
+			int constAxis, float wallCamRel, int frameCoord,
+			int uAxis, double uMinW, double uMaxW, int vAxis, double vMinW, double vMaxW) {
+		double[] camA = {cam.x, cam.y, cam.z};
+		float[] c0 = new float[3], c1 = new float[3], c2 = new float[3], c3 = new float[3];
+		c0[constAxis] = c1[constAxis] = c2[constAxis] = c3[constAxis] = wallCamRel;
+		if (!masked) {
+			emitCell(buffer, c0, c1, c2, c3, uAxis, (float) (uMinW - camA[uAxis]), (float) (uMaxW - camA[uAxis]),
+					vAxis, (float) (vMinW - camA[vAxis]), (float) (vMaxW - camA[vAxis]));
+			return;
+		}
+		int cuMin = (int) Math.floor(uMinW), cuMax = (int) Math.ceil(uMaxW) - 1;
+		int cvMin = (int) Math.floor(vMinW), cvMax = (int) Math.ceil(vMaxW) - 1;
+		BlockPos.Mutable pos = new BlockPos.Mutable();
+		int[] bp = new int[3];
+		bp[constAxis] = frameCoord;
+		for (int cu = cuMin; cu <= cuMax; cu++) {
+			bp[uAxis] = cu;
+			float uu0 = (float) (Math.max(cu, uMinW) - camA[uAxis]);
+			float uu1 = (float) (Math.min(cu + 1, uMaxW) - camA[uAxis]);
+			for (int cv = cvMin; cv <= cvMax; cv++) {
+				bp[vAxis] = cv;
+				if (world.getBlockState(pos.set(bp[0], bp[1], bp[2])).isOf(Blocks.OBSIDIAN)) {
+					continue; // keep the obsidian ledge exposed
+				}
+				emitCell(buffer, c0, c1, c2, c3, uAxis, uu0, uu1,
+						vAxis, (float) (Math.max(cv, vMinW) - camA[vAxis]), (float) (Math.min(cv + 1, vMaxW) - camA[vAxis]));
+			}
+		}
+	}
+
+	/** Write one POSITION-only quad in the given axis frame (constAxis already fixed on c0..c3). */
+	private static void emitCell(BufferBuilder buffer, float[] c0, float[] c1, float[] c2, float[] c3,
+			int uAxis, float u0, float u1, int vAxis, float v0, float v1) {
+		c0[uAxis] = u0; c0[vAxis] = v0;
+		c1[uAxis] = u1; c1[vAxis] = v0;
+		c2[uAxis] = u1; c2[vAxis] = v1;
+		c3[uAxis] = u0; c3[vAxis] = v1;
+		quad(buffer, c0[0], c0[1], c0[2], c1[0], c1[1], c1[2], c2[0], c2[1], c2[2], c3[0], c3[1], c3[2]);
 	}
 
 	private record Drawable(PortalRecord record, GlimpseTextures.GlimpseTexture texture,
