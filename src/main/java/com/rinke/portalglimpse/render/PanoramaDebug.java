@@ -35,4 +35,9 @@ public final class PanoramaDebug {
 	public static boolean isTarget(UUID id) {
 		return id.equals(target);
 	}
+
+	/** Drop the debug target (e.g. when debug mode is switched off). */
+	public static void clear() {
+		target = null;
+	}
 }

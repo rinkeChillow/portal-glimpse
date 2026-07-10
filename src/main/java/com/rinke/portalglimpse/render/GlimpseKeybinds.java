@@ -87,6 +87,11 @@ public final class GlimpseKeybinds {
 		if (veilUpKey == null || veilDownKey == null || toggleGlimpsesKey == null) {
 			return;
 		}
+		// All of these are debug tools, hidden behind the /pgdebug toggle (default off). When debug is
+		// off the keys do nothing, so a normal player pressing H/J/K/numpad sees no effect.
+		if (!GlimpseSettings.debugMode) {
+			return;
+		}
 		boolean veilChanged = false;
 		while (veilUpKey.wasPressed()) {
 			GlimpseSettings.veilAlpha = Math.min(255, GlimpseSettings.veilAlpha + STEP);
@@ -131,6 +136,14 @@ public final class GlimpseKeybinds {
 			toggleDebugPanorama(client);
 		}
 		while (blockTravelKey.wasPressed()) {
+			// Blocking travel only works where THIS client also runs the (integrated) server that
+			// decides teleportation — singleplayer or a LAN host. On a remote server the server is
+			// authoritative and unmodded (we're client-only), so it'd teleport you regardless; refuse
+			// loudly instead of pretending it worked.
+			if (!GlimpseSettings.debugBlockPortalTravel && client.getServer() == null) {
+				actionbar(client, "Portal travel block is singleplayer-only — a remote server controls teleporting");
+				continue;
+			}
 			GlimpseSettings.debugBlockPortalTravel = !GlimpseSettings.debugBlockPortalTravel;
 			actionbar(client, GlimpseSettings.debugBlockPortalTravel
 					? "Portal travel BLOCKED — stand in the portal to inspect (no teleport, no nausea)"

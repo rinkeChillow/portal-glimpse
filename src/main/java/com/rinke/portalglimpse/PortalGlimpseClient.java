@@ -2,6 +2,7 @@ package com.rinke.portalglimpse;
 
 import com.rinke.portalglimpse.capture.CaptureManager;
 import com.rinke.portalglimpse.detect.PortalDetection;
+import com.rinke.portalglimpse.render.DebugCommand;
 import com.rinke.portalglimpse.render.GlimpseRenderers;
 import com.rinke.portalglimpse.render.GlimpseKeybinds;
 import com.rinke.portalglimpse.render.GlimpseWorldRendering;
@@ -34,6 +35,10 @@ public class PortalGlimpseClient implements ClientModInitializer {
 		// Draw glimpses on portal surfaces every frame (§4): postcard under the living veil.
 		GlimpseWorldRendering.register();
 		GlimpseKeybinds.register();
+
+		// Hidden "/pgdebug" command gates all the debug keybinds/tools above (default off) so normal
+		// players never trigger them — only someone who knows the exact command can turn them on.
+		DebugCommand.register();
 
 		// Hide a portal's glimpse while the player is still standing in it right after teleporting in.
 		PortalArrivalGate.register();

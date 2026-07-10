@@ -96,9 +96,10 @@ public final class PortalTransitionView {
 		return activeFov;
 	}
 
-	/** DEBUG: true while the loading screen should be held open waiting for Numpad 5. */
+	/** DEBUG: true while the loading screen should be held open waiting for Numpad 5. Only when the
+	 * hidden /pgdebug mode is on — otherwise the loading screen closes normally for players. */
 	public static boolean shouldHoldForDebug() {
-		return active && activeFaces != null && !debugReleased;
+		return GlimpseSettings.debugMode && active && activeFaces != null && !debugReleased;
 	}
 
 	/**

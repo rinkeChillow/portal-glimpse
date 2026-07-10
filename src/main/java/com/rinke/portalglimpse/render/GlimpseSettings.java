@@ -27,6 +27,12 @@ public final class GlimpseSettings {
 	 * Read from the render thread and (in singleplayer) the integrated-server thread. */
 	public static volatile boolean debugBlockPortalTravel = false;
 
+	/** Master gate for ALL debug tooling — the tuning keybinds, the debug cubemap (K), the
+	 * loading-screen hold (Numpad 5) and the block-travel freeze (Numpad 0). Default OFF; toggled by
+	 * the hidden {@code /pgdebug} command ({@link DebugCommand}). Normal players never see the debug
+	 * keys do anything. Read from several client-thread spots (and the mixin tick hook). */
+	public static volatile boolean debugMode = false;
+
 	private GlimpseSettings() {
 	}
 }

@@ -28,8 +28,13 @@ public class ChunkRendererRegionMixin {
 	@Inject(method = "getBlockState", at = @At("HEAD"), cancellable = true)
 	private void portalglimpse$hideGhostedBlocks(BlockPos pos, CallbackInfoReturnable<BlockState> cir) {
 		// Capture ghosting (§3.2 step 3) and glimpse replacement (the vanilla portal quads make
-		// way for our glimpse + veil rendering) share the same technique: mesh the block as air.
-		if (GhostState.isHidden(pos) || GlimpseRenderState.isHidden(pos)) {
+		// way for our glimpse + veil rendering) share the same technique: mesh a substitute state.
+		// Ghosting may clone a wall block for embedded frame obsidian (no hole in the capture);
+		// everything else — interior blocks, free-standing frame, glimpse positions — meshes as air.
+		BlockState ghostReplacement = GhostState.replacementFor(pos);
+		if (ghostReplacement != null) {
+			cir.setReturnValue(ghostReplacement);
+		} else if (GlimpseRenderState.isHidden(pos)) {
 			cir.setReturnValue(Blocks.AIR.getDefaultState());
 		}
 	}
