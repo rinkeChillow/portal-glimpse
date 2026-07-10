@@ -92,20 +92,27 @@ public final class GlimpseKeybinds {
 		if (!GlimpseSettings.debugMode) {
 			return;
 		}
+		net.minecraft.util.Identifier dim = client.world != null
+				? client.world.getRegistryKey().getValue() : null;
 		boolean veilChanged = false;
 		while (veilUpKey.wasPressed()) {
-			GlimpseSettings.veilAlpha = Math.min(255, GlimpseSettings.veilAlpha + STEP);
-			veilChanged = true;
+			if (dim != null) {
+				GlimpseSettings.nudgeVeilForStandingIn(dim, STEP);
+				veilChanged = true;
+			}
 		}
 		while (veilDownKey.wasPressed()) {
-			GlimpseSettings.veilAlpha = Math.max(0, GlimpseSettings.veilAlpha - STEP);
-			veilChanged = true;
+			if (dim != null) {
+				GlimpseSettings.nudgeVeilForStandingIn(dim, -STEP);
+				veilChanged = true;
+			}
 		}
 		if (veilChanged) {
-			int percent = Math.round(GlimpseSettings.veilAlpha * 100.0F / 255.0F);
-			actionbar(client, "Veil opacity: " + percent + "%"
-					+ (GlimpseSettings.veilAlpha == 0 ? " (pure glimpse)" : "")
-					+ (GlimpseSettings.veilAlpha == 255 ? " (fully vanilla)" : ""));
+			int alpha = GlimpseSettings.veilAlphaForStandingIn(dim);
+			int percent = Math.round(alpha * 100.0F / 255.0F);
+			actionbar(client, "Veil opacity (this view): " + percent + "%"
+					+ (alpha == 0 ? " (pure glimpse)" : "")
+					+ (alpha == 255 ? " (fully vanilla)" : ""));
 		}
 		while (toggleGlimpsesKey.wasPressed()) {
 			GlimpseSettings.glimpsesVisible = !GlimpseSettings.glimpsesVisible;
@@ -121,7 +128,7 @@ public final class GlimpseKeybinds {
 		}
 		boolean fovChanged = false;
 		while (radiusUpKey.wasPressed()) {
-			GlimpseSettings.panoramaFovDegrees = Math.min(85.0F, GlimpseSettings.panoramaFovDegrees + 5.0F);
+			GlimpseSettings.panoramaFovDegrees = Math.min(60.0F, GlimpseSettings.panoramaFovDegrees + 5.0F);
 			fovChanged = true;
 		}
 		while (radiusDownKey.wasPressed()) {

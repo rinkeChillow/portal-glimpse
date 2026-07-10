@@ -1,6 +1,7 @@
 package com.rinke.portalglimpse;
 
 import com.rinke.portalglimpse.capture.CaptureManager;
+import com.rinke.portalglimpse.config.GlimpseConfig;
 import com.rinke.portalglimpse.detect.PortalDetection;
 import com.rinke.portalglimpse.render.DebugCommand;
 import com.rinke.portalglimpse.render.GlimpseRenderers;
@@ -17,6 +18,10 @@ public class PortalGlimpseClient implements ClientModInitializer {
 
 	@Override
 	public void onInitializeClient() {
+		// Load persistent settings first so they're applied before anything renders (Phase 5). The
+		// Cloth Config screen (Mod Menu button) writes them back; GlimpseSettings holds the live copy.
+		GlimpseConfig.load();
+
 		// Select the rendering backend up front (design doc §7: all rendering goes behind a
 		// thin abstraction so the later Sodium/Iris pass swaps implementations, not features).
 		GlimpseRenderers.init();

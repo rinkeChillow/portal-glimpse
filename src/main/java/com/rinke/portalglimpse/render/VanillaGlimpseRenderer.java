@@ -293,7 +293,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			int glimpseAlpha = GlimpseSettings.glimpsesVisible
 					? Math.round(GLIMPSE_ALPHA * fade * arrivalFade * distanceFade * departFade)
 					: 0;
-			int veilAlpha = GlimpseSettings.veilAlpha;
+			int veilAlpha = GlimpseSettings.veilAlphaForStandingIn(dimension);
 
 			GlimpseTextures.GlimpseTexture texture = GlimpseTextures.get(client, store.baseDir(), record);
 			if (texture == null) {

@@ -1,13 +1,23 @@
 package com.rinke.portalglimpse.render;
 
+import net.minecraft.util.Identifier;
+import net.minecraft.world.World;
+
 /**
- * Live-tunable rendering settings (design doc §4.3 / §6). Debug keybinds adjust these in-game;
- * Cloth Config takes over persistence in Phase 5.
+ * Live-tunable rendering settings (design doc §4.3 / §6). The config screen persists these; the
+ * debug keybinds adjust them live (not persisted).
  */
 public final class GlimpseSettings {
 
-	/** Veil opacity 0..255 — 0 = pure glimpse (only the view), 255 = fully vanilla swirl (§4.3). */
-	public static int veilAlpha = 100;
+	/**
+	 * Veil opacity 0..255, split by the dimension you are VIEWING (the glimpse content), because the
+	 * swirl reads differently over a Nether view than an Overworld view. The opacity targets the
+	 * view, so it's flipped relative to where you stand: standing in the Overworld you look at the
+	 * Nether ({@link #netherVeilAlpha}); standing in the Nether you look at the Overworld
+	 * ({@link #overworldVeilAlpha}). 0 = clear window, 255 = full vanilla swirl (§4.3).
+	 */
+	public static int netherVeilAlpha = 51;     // ~20% — the Nether view, seen from the Overworld
+	public static int overworldVeilAlpha = 102; // ~40% — the Overworld view, seen from the Nether
 
 	/** Master toggle for the glimpse view layer (H). The modded veil renders either way. */
 	public static boolean glimpsesVisible = true;
@@ -34,5 +44,28 @@ public final class GlimpseSettings {
 	public static volatile boolean debugMode = false;
 
 	private GlimpseSettings() {
+	}
+
+	private static boolean isNether(Identifier dimension) {
+		return World.NETHER.getValue().equals(dimension);
+	}
+
+	/** Veil alpha for a glimpse whose CONTENT is the given (viewed) dimension. */
+	public static int veilAlphaForView(Identifier viewedDimension) {
+		return isNether(viewedDimension) ? netherVeilAlpha : overworldVeilAlpha;
+	}
+
+	/** Veil alpha for a portal in the dimension the player stands in (the view is the opposite dim). */
+	public static int veilAlphaForStandingIn(Identifier currentDimension) {
+		return isNether(currentDimension) ? overworldVeilAlpha : netherVeilAlpha;
+	}
+
+	/** Debug nudge (Numpad 9/6): adjust the veil for the view the player is currently looking at. */
+	public static void nudgeVeilForStandingIn(Identifier currentDimension, int delta) {
+		if (isNether(currentDimension)) {
+			overworldVeilAlpha = Math.max(0, Math.min(255, overworldVeilAlpha + delta));
+		} else {
+			netherVeilAlpha = Math.max(0, Math.min(255, netherVeilAlpha + delta));
+		}
 	}
 }

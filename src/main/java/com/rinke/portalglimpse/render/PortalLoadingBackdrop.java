@@ -151,9 +151,13 @@ public final class PortalLoadingBackdrop {
 		setVec2(shader, "SpriteMax", sprite.getMaxU(), sprite.getMaxV());
 		GlUniform alpha = shader.getUniform("Alpha");
 		if (alpha != null) {
-			// Match the in-world portal veil opacity (Numpad 9/6 / Phase-5 config) so the loading
-			// screen's veil always tracks the same setting.
-			alpha.set(GlimpseSettings.veilAlpha / 255.0F * extraAlpha);
+			// Match the in-world portal veil opacity for the view being shown. The loading backdrop
+			// (and the arrival veil) show the DESTINATION, which is the dimension the client is now in,
+			// so the veil tracks that dimension's setting (§4.3 / Phase-5 config).
+			int veilAlpha = client.world != null
+					? GlimpseSettings.veilAlphaForView(client.world.getRegistryKey().getValue())
+					: GlimpseSettings.netherVeilAlpha;
+			alpha.set(veilAlpha / 255.0F * extraAlpha);
 		}
 
 		BufferBuilder buffer = Tessellator.getInstance()
