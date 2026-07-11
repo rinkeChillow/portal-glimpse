@@ -1,7 +1,10 @@
 package com.rinke.portalglimpse;
 
 import com.rinke.portalglimpse.capture.CaptureManager;
+import com.rinke.portalglimpse.capture.ManualCapture;
 import com.rinke.portalglimpse.config.GlimpseConfig;
+import com.rinke.portalglimpse.config.GlimpseHotkeys;
+import com.rinke.portalglimpse.config.PreviewOverlay;
 import com.rinke.portalglimpse.detect.PortalDetection;
 import com.rinke.portalglimpse.render.DebugCommand;
 import com.rinke.portalglimpse.render.GlimpseRenderers;
@@ -34,6 +37,9 @@ public class PortalGlimpseClient implements ClientModInitializer {
 		// (TravelTracker). Re-add CaptureKeybinding.register() to bring the debug key back.
 		CaptureManager.register();
 
+		// Manual capture: Ctrl+Shift+right-click a portal to pin/cancel a player-curated glimpse (§3.4).
+		ManualCapture.register();
+
 		// Automatic glimpse on portal travel, behind the held loading screen (§3.2).
 		TravelTracker.register();
 
@@ -44,6 +50,12 @@ public class PortalGlimpseClient implements ClientModInitializer {
 		// Hidden "/pgdebug" command gates all the debug keybinds/tools above (default off) so normal
 		// players never trigger them — only someone who knows the exact command can turn them on.
 		DebugCommand.register();
+
+		// Player-facing keybinds (default unbound): toggle glimpses, open the config screen.
+		GlimpseHotkeys.register();
+
+		// Global init hook so the maximized-preview overlay can attach to the config screen.
+		PreviewOverlay.registerGlobal();
 
 		// Hide a portal's glimpse while the player is still standing in it right after teleporting in.
 		PortalArrivalGate.register();

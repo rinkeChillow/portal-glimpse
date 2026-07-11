@@ -6,11 +6,13 @@
 		"EntityPortalMixin"
 	],
 	"client": [
+		"AbstractConfigScreenMixin",
 		"BillboardParticleMixin",
 		"CameraMixin",
 		"ChunkRendererRegionMixin",
 		"DownloadingTerrainScreenAccessor",
-		"DownloadingTerrainScreenMixin"
+		"DownloadingTerrainScreenMixin",
+		"WorldRendererMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

@@ -1,8 +1,8 @@
 package com.rinke.portalglimpse.config;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
-import java.util.Random;
 
 import com.rinke.portalglimpse.data.PortalRecord;
 import com.rinke.portalglimpse.data.PortalStore;
@@ -16,6 +16,7 @@ import me.shedaniel.clothconfig2.gui.entries.IntegerSliderEntry;
 
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.option.KeyBinding;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 
@@ -35,7 +36,12 @@ public final class GlimpseConfigScreen {
 		ConfigBuilder builder = ConfigBuilder.create()
 				.setParentScreen(parent)
 				.setTitle(Text.translatable("portal-glimpse.config.title"))
-				.setSavingRunnable(config::save);
+				.setSavingRunnable(() -> {
+					config.save();
+					// Keybind fields below edit the game's KeyBindings directly; refresh + persist them.
+					KeyBinding.updateKeysByCode();
+					MinecraftClient.getInstance().options.write();
+				});
 
 		ConfigEntryBuilder entry = builder.entryBuilder();
 		ConfigCategory general = builder.getOrCreateCategory(
@@ -62,8 +68,10 @@ public final class GlimpseConfigScreen {
 		// a live preview box above it (a portal-shaped panorama with the swirl at the current value).
 		MinecraftClient client = MinecraftClient.getInstance();
 
+		// The label is drawn on the preview row (centred alongside the box), so the slider itself has
+		// a blank name — matching the mockup's single, vertically-centred label.
 		IntegerSliderEntry netherVeil = entry.startIntSlider(
-						Text.translatable("portal-glimpse.config.netherVeilOpacity"),
+						Text.empty(),
 						Math.round(config.netherVeilAlpha * 100.0F / 255.0F), 0, 100)
 				.setDefaultValue(20)
 				.setTextGetter(v -> Text.literal(v + "%"))
@@ -72,11 +80,11 @@ public final class GlimpseConfigScreen {
 				.build();
 		general.addEntry(new PortalPreviewEntry(
 				Text.translatable("portal-glimpse.config.netherVeilOpacity"),
-				() -> netherVeil.getValue(), pickPanoramaFace(client)));
+				() -> netherVeil.getValue(), pickPanorama(client, true)));
 		general.addEntry(netherVeil);
 
 		IntegerSliderEntry overworldVeil = entry.startIntSlider(
-						Text.translatable("portal-glimpse.config.overworldVeilOpacity"),
+						Text.empty(),
 						Math.round(config.overworldVeilAlpha * 100.0F / 255.0F), 0, 100)
 				.setDefaultValue(40)
 				.setTextGetter(v -> Text.literal(v + "%"))
@@ -85,40 +93,67 @@ public final class GlimpseConfigScreen {
 				.build();
 		general.addEntry(new PortalPreviewEntry(
 				Text.translatable("portal-glimpse.config.overworldVeilOpacity"),
-				() -> overworldVeil.getValue(), pickPanoramaFace(client)));
+				() -> overworldVeil.getValue(), pickPanorama(client, false)));
 		general.addEntry(overworldVeil);
 
-		return builder.build();
+		// The two player keybinds, also editable here (they remain in the vanilla Controls menu too).
+		general.addEntry(entry.fillKeybindingField(
+				Text.translatable("key.portal-glimpse.toggle_glimpses_hotkey"),
+				GlimpseHotkeys.toggleGlimpsesKeyBinding()).build());
+		general.addEntry(entry.fillKeybindingField(
+				Text.translatable("key.portal-glimpse.open_config"),
+				GlimpseHotkeys.openConfigKeyBinding()).build());
+
+		Screen screen = builder.build();
+		// The maximized preview draws as an overlay ON TOP of this screen (keeps it sharp, no blur).
+		// Actual hook-up happens on the screen's AFTER_INIT (see PreviewOverlay.registerGlobal).
+		PreviewOverlay.expect(screen);
+		return screen;
 	}
 
 	/**
-	 * A backdrop for the preview box: a random face of a real captured panorama if any are loaded,
-	 * otherwise the vanilla title-screen panorama. Re-rolled each time the screen is built, so the
-	 * preview varies between openings.
+	 * Horizontal panorama faces for a preview, re-rolled each time the screen is built so it varies.
+	 * {@code wantNether} selects the CONTENT dimension: the Nether-veil preview shows Nether views,
+	 * the Overworld-veil preview shows Overworld views. Priority:
+	 * <ol>
+	 *   <li>in-world — a random matching-dimension capture already loaded on the GPU;</li>
+	 *   <li>otherwise (e.g. the main menu) — a random matching saved capture pulled off disk;</li>
+	 *   <li>failing both — netherrack for a Nether view, or the vanilla title panorama for an Overworld view.</li>
+	 * </ol>
 	 */
-	private static Identifier pickPanoramaFace(MinecraftClient client) {
-		List<Identifier> pool = new ArrayList<>();
+	private static Identifier[] pickPanorama(MinecraftClient client, boolean wantNether) {
 		PortalStore store = PortalDetection.store();
 		if (store != null) {
+			List<PortalRecord> matches = new ArrayList<>();
 			for (PortalRecord record : store.all()) {
-				if (!record.auto.hasCapture) {
-					continue;
+				Boolean nether = PreviewPanoramas.contentIsNether(record.dimension);
+				if (record.auto.hasCapture && nether != null && nether == wantNether) {
+					matches.add(record);
 				}
+			}
+			Collections.shuffle(matches);
+			for (PortalRecord record : matches) {
 				Identifier[] faces = PanoramaTextures.get(client, store.baseDir(), record);
 				if (faces != null) {
-					for (int i = 0; i < 4; i++) { // horizontal faces read best in a portal box
-						if (faces[i] != null) {
-							pool.add(faces[i]);
-						}
-					}
+					return new Identifier[] { faces[0], faces[1], faces[2], faces[3] };
 				}
 			}
 		}
-		if (pool.isEmpty()) {
-			for (int i = 0; i < 6; i++) {
-				pool.add(Identifier.ofVanilla("textures/gui/title/background/panorama_" + i + ".png"));
-			}
+
+		// No matching live captures (or no world): pull a matching saved capture off disk.
+		Identifier[] fromDisk = PreviewPanoramas.pickFaces(client, wantNether);
+		if (fromDisk != null) {
+			return fromDisk;
 		}
-		return pool.get(new Random().nextInt(pool.size()));
+
+		// Nothing captured for that dimension yet: a dimension-appropriate placeholder.
+		if (wantNether) {
+			return new Identifier[] { Identifier.ofVanilla("textures/block/netherrack.png") };
+		}
+		Identifier[] title = new Identifier[4];
+		for (int i = 0; i < 4; i++) {
+			title[i] = Identifier.ofVanilla("textures/gui/title/background/panorama_" + i + ".png");
+		}
+		return title;
 	}
 }

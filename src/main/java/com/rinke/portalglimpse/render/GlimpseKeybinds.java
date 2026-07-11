@@ -7,105 +7,70 @@ import com.rinke.portalglimpse.data.PortalStore;
 import com.rinke.portalglimpse.detect.PortalDetection;
 
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
+import net.minecraft.util.Identifier;
 
 /**
- * Debug keys for live-tuning the glimpse rendering while iterating:
- * <ul>
- *   <li>Numpad 9 / 6 — veil opacity up / down (§4.3; 0 = pure glimpse, 100% = vanilla swirl)</li>
- *   <li>H — toggle the glimpse view layer on/off; the modded veil keeps rendering either way</li>
- * </ul>
+ * Hard-coded DEBUG keys, read from raw GLFW state so they DON'T appear in the vanilla Controls menu
+ * (they're not meant to be rebound — only the developer uses them). All gated behind the hidden
+ * {@code /pgdebug} toggle ({@link GlimpseSettings#debugMode}), off by default:
+ * Numpad 9/6 veil ±, Numpad 8/2 FOV ±, H glimpses, J postcard fade, K debug cubemap, Numpad 0
+ * block-travel. (The Numpad-5 loading-screen hold is polled separately in {@code PortalTransitionView}.)
  */
 public final class GlimpseKeybinds {
 
 	private static final int STEP = 25;
 
-	private static KeyBinding veilUpKey;
-	private static KeyBinding veilDownKey;
-	private static KeyBinding toggleGlimpsesKey;
-	private static KeyBinding toggleFadeKey;
-	private static KeyBinding radiusUpKey;
-	private static KeyBinding radiusDownKey;
-	private static KeyBinding debugPanoramaKey;
-	private static KeyBinding blockTravelKey;
+	private static final int KEY_VEIL_UP = GLFW.GLFW_KEY_KP_9;
+	private static final int KEY_VEIL_DOWN = GLFW.GLFW_KEY_KP_6;
+	private static final int KEY_TOGGLE_GLIMPSES = GLFW.GLFW_KEY_H;
+	private static final int KEY_TOGGLE_FADE = GLFW.GLFW_KEY_J;
+	private static final int KEY_FOV_UP = GLFW.GLFW_KEY_KP_8;
+	private static final int KEY_FOV_DOWN = GLFW.GLFW_KEY_KP_2;
+	private static final int KEY_DEBUG_PANORAMA = GLFW.GLFW_KEY_K;
+	private static final int KEY_BLOCK_TRAVEL = GLFW.GLFW_KEY_KP_0;
+
+	private static final int[] KEYS = {
+			KEY_VEIL_UP, KEY_VEIL_DOWN, KEY_TOGGLE_GLIMPSES, KEY_TOGGLE_FADE,
+			KEY_FOV_UP, KEY_FOV_DOWN, KEY_DEBUG_PANORAMA, KEY_BLOCK_TRAVEL
+	};
+	/** Previous frame's down-state per key, for rising-edge detection. */
+	private static final boolean[] WAS_DOWN = new boolean[KEYS.length];
 
 	private GlimpseKeybinds() {
 	}
 
 	public static void register() {
-		veilUpKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-				"key.portal-glimpse.veil_up",
-				InputUtil.Type.KEYSYM,
-				GLFW.GLFW_KEY_KP_9,
-				"key.categories.portal-glimpse"));
-		veilDownKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-				"key.portal-glimpse.veil_down",
-				InputUtil.Type.KEYSYM,
-				GLFW.GLFW_KEY_KP_6,
-				"key.categories.portal-glimpse"));
-		toggleGlimpsesKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-				"key.portal-glimpse.toggle_glimpses",
-				InputUtil.Type.KEYSYM,
-				GLFW.GLFW_KEY_H,
-				"key.categories.portal-glimpse"));
-		toggleFadeKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-				"key.portal-glimpse.toggle_fade",
-				InputUtil.Type.KEYSYM,
-				GLFW.GLFW_KEY_J,
-				"key.categories.portal-glimpse"));
-		radiusUpKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-				"key.portal-glimpse.radius_up",
-				InputUtil.Type.KEYSYM,
-				GLFW.GLFW_KEY_KP_8,
-				"key.categories.portal-glimpse"));
-		radiusDownKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-				"key.portal-glimpse.radius_down",
-				InputUtil.Type.KEYSYM,
-				GLFW.GLFW_KEY_KP_2,
-				"key.categories.portal-glimpse"));
-		debugPanoramaKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-				"key.portal-glimpse.debug_panorama",
-				InputUtil.Type.KEYSYM,
-				GLFW.GLFW_KEY_K,
-				"key.categories.portal-glimpse"));
-		blockTravelKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-				"key.portal-glimpse.block_travel",
-				InputUtil.Type.KEYSYM,
-				GLFW.GLFW_KEY_KP_0,
-				"key.categories.portal-glimpse"));
 		ClientTickEvents.END_CLIENT_TICK.register(GlimpseKeybinds::onTick);
 	}
 
 	private static void onTick(MinecraftClient client) {
-		if (veilUpKey == null || veilDownKey == null || toggleGlimpsesKey == null) {
+		long handle = client.getWindow().getHandle();
+		boolean[] justPressed = new boolean[KEYS.length];
+		for (int i = 0; i < KEYS.length; i++) {
+			boolean down = InputUtil.isKeyPressed(handle, KEYS[i]);
+			justPressed[i] = down && !WAS_DOWN[i];
+			WAS_DOWN[i] = down;
+		}
+		// Only while the hidden debug mode is on, and not while a screen (chat/menu) owns input.
+		if (!GlimpseSettings.debugMode || client.currentScreen != null) {
 			return;
 		}
-		// All of these are debug tools, hidden behind the /pgdebug toggle (default off). When debug is
-		// off the keys do nothing, so a normal player pressing H/J/K/numpad sees no effect.
-		if (!GlimpseSettings.debugMode) {
-			return;
-		}
-		net.minecraft.util.Identifier dim = client.world != null
-				? client.world.getRegistryKey().getValue() : null;
+
+		Identifier dim = client.world != null ? client.world.getRegistryKey().getValue() : null;
 		boolean veilChanged = false;
-		while (veilUpKey.wasPressed()) {
-			if (dim != null) {
-				GlimpseSettings.nudgeVeilForStandingIn(dim, STEP);
-				veilChanged = true;
-			}
+		if (justPressed[0] && dim != null) {
+			GlimpseSettings.nudgeVeilForStandingIn(dim, STEP);
+			veilChanged = true;
 		}
-		while (veilDownKey.wasPressed()) {
-			if (dim != null) {
-				GlimpseSettings.nudgeVeilForStandingIn(dim, -STEP);
-				veilChanged = true;
-			}
+		if (justPressed[1] && dim != null) {
+			GlimpseSettings.nudgeVeilForStandingIn(dim, -STEP);
+			veilChanged = true;
 		}
 		if (veilChanged) {
 			int alpha = GlimpseSettings.veilAlphaForStandingIn(dim);
@@ -114,24 +79,24 @@ public final class GlimpseKeybinds {
 					+ (alpha == 0 ? " (pure glimpse)" : "")
 					+ (alpha == 255 ? " (fully vanilla)" : ""));
 		}
-		while (toggleGlimpsesKey.wasPressed()) {
+		if (justPressed[2]) {
 			GlimpseSettings.glimpsesVisible = !GlimpseSettings.glimpsesVisible;
 			actionbar(client, GlimpseSettings.glimpsesVisible
-					? "Glimpses ON — windows into the other world"
-					: "Glimpses OFF — modded swirl only");
+					? "Portal Glimpse ON"
+					: "Portal Glimpse OFF — vanilla portals");
 		}
-		while (toggleFadeKey.wasPressed()) {
+		if (justPressed[3]) {
 			GlimpseSettings.proximityFade = !GlimpseSettings.proximityFade;
 			actionbar(client, GlimpseSettings.proximityFade
 					? "Postcard distance fade ON"
 					: "Postcard distance fade OFF");
 		}
 		boolean fovChanged = false;
-		while (radiusUpKey.wasPressed()) {
+		if (justPressed[4]) {
 			GlimpseSettings.panoramaFovDegrees = Math.min(60.0F, GlimpseSettings.panoramaFovDegrees + 5.0F);
 			fovChanged = true;
 		}
-		while (radiusDownKey.wasPressed()) {
+		if (justPressed[5]) {
 			GlimpseSettings.panoramaFovDegrees = Math.max(20.0F, GlimpseSettings.panoramaFovDegrees - 5.0F);
 			fovChanged = true;
 		}
@@ -139,25 +104,22 @@ public final class GlimpseKeybinds {
 			actionbar(client, String.format("Panorama FOV: %.0f° (higher = wider / smaller content)",
 					GlimpseSettings.panoramaFovDegrees));
 		}
-		while (debugPanoramaKey.wasPressed()) {
+		if (justPressed[6]) {
 			toggleDebugPanorama(client);
 		}
-		while (blockTravelKey.wasPressed()) {
-			// Blocking travel only works where THIS client also runs the (integrated) server that
-			// decides teleportation — singleplayer or a LAN host. On a remote server the server is
-			// authoritative and unmodded (we're client-only), so it'd teleport you regardless; refuse
-			// loudly instead of pretending it worked.
+		if (justPressed[7]) {
+			// Blocking travel only works with an integrated server (SP / LAN host); a remote server is
+			// authoritative and unmodded, so refuse rather than pretend it worked.
 			if (!GlimpseSettings.debugBlockPortalTravel && client.getServer() == null) {
 				actionbar(client, "Portal travel block is singleplayer-only — a remote server controls teleporting");
-				continue;
+			} else {
+				GlimpseSettings.debugBlockPortalTravel = !GlimpseSettings.debugBlockPortalTravel;
+				actionbar(client, GlimpseSettings.debugBlockPortalTravel
+						? "Portal travel BLOCKED — stand in the portal to inspect (no teleport, no nausea)"
+						: "Portal travel restored");
 			}
-			GlimpseSettings.debugBlockPortalTravel = !GlimpseSettings.debugBlockPortalTravel;
-			actionbar(client, GlimpseSettings.debugBlockPortalTravel
-					? "Portal travel BLOCKED — stand in the portal to inspect (no teleport, no nausea)"
-					: "Portal travel restored");
 		}
-		// While travel is blocked, keep the client's portal-nausea wobble pinned at zero so the view
-		// stays clear even if any lingering portal state tries to ramp it up.
+		// While travel is blocked, keep the client's portal-nausea wobble pinned at zero.
 		if (GlimpseSettings.debugBlockPortalTravel && client.player != null) {
 			client.player.nauseaIntensity = 0.0F;
 			client.player.prevNauseaIntensity = 0.0F;

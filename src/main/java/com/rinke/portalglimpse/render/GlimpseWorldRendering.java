@@ -15,6 +15,9 @@ public final class GlimpseWorldRendering {
 	public static void register() {
 		PortalShaders.register();
 		WorldRenderEvents.AFTER_TRANSLUCENT.register(context -> GlimpseRenderers.get().renderWorld(context));
+		// Manual-capture glow: feed the portal silhouette into the entity-outline buffer before it's
+		// flushed, so vanilla's outline post-process (forced by WorldRendererMixin) glows the edges.
+		WorldRenderEvents.AFTER_ENTITIES.register(PortalGlowOutline::render);
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(() -> {
 			GlimpseTextures.clear(client);
 			PanoramaTextures.clear(client);

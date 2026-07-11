@@ -1,23 +1,18 @@
 {
 	"key.categories.portal-glimpse": "Portal Glimpse",
-	"key.portal-glimpse.capture": "Capture Portal Glimpse (debug)",
-	"key.portal-glimpse.veil_up": "Veil Opacity + (debug)",
-	"key.portal-glimpse.veil_down": "Veil Opacity - (debug)",
-	"key.portal-glimpse.toggle_glimpses": "Toggle Glimpses (debug)",
-	"key.portal-glimpse.toggle_fade": "Toggle Postcard Distance Fade (debug)",
-	"key.portal-glimpse.radius_up": "Panorama Room Radius + (debug)",
-	"key.portal-glimpse.radius_down": "Panorama Room Radius - (debug)",
-	"key.portal-glimpse.debug_panorama": "Debug Cubemap on Nearest Portal (debug)",
-	"key.portal-glimpse.block_travel": "Block Portal Travel + Nausea (debug)",
+	"key.portal-glimpse.toggle_glimpses_hotkey": "Toggle Portal Glimpse (on/off)",
+	"key.portal-glimpse.open_config": "Open Config Screen",
 
 	"portal-glimpse.config.title": "Portal Glimpse",
 	"portal-glimpse.config.category.general": "General",
-	"portal-glimpse.config.glimpsesVisible": "Show Glimpses",
-	"portal-glimpse.config.glimpsesVisible.tooltip": "Show the view of the destination on nether portals. Turn off to keep plain portals (the swirl still renders).",
+	"portal-glimpse.config.glimpsesVisible": "Enable Portal Glimpse",
+	"portal-glimpse.config.glimpsesVisible.tooltip": "Master toggle for the mod. Turn off for plain, 100% vanilla nether portals.",
 	"portal-glimpse.config.panoramaFov": "Panorama Field of View",
 	"portal-glimpse.config.panoramaFov.tooltip": "How much of the destination the portal frames. Higher = a wider view with smaller-looking content.",
 	"portal-glimpse.config.netherVeilOpacity": "Nether Veil Opacity",
 	"portal-glimpse.config.netherVeilOpacity.tooltip": "Swirl opacity over the Nether view — what you see looking into portals while in the Overworld. 0% = clear window, 100% = full vanilla swirl.",
 	"portal-glimpse.config.overworldVeilOpacity": "Overworld Veil Opacity",
-	"portal-glimpse.config.overworldVeilOpacity.tooltip": "Swirl opacity over the Overworld view — what you see looking into portals while in the Nether. 0% = clear window, 100% = full vanilla swirl."
+	"portal-glimpse.config.overworldVeilOpacity.tooltip": "Swirl opacity over the Overworld view — what you see looking into portals while in the Nether. 0% = clear window, 100% = full vanilla swirl.",
+	"portal-glimpse.preview.clickForBigger": "Click for a bigger preview",
+	"portal-glimpse.preview.dragHint": "Drag left / right to look around"
 }

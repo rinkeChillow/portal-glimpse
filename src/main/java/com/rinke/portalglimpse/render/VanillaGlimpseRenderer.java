@@ -147,11 +147,19 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		Identifier dimension = world.getRegistryKey().getValue();
 		Vec3d cameraPos = context.camera().getPos();
 
+		// Master on/off: when the mod is disabled, unhide the portal blocks and draw nothing, so
+		// portals are 100% vanilla (not just the glimpse hidden — the whole overlay is off).
+		if (!GlimpseSettings.glimpsesVisible) {
+			GlimpseRenderState.clear(client);
+			return;
+		}
+
 		// Collect portals that should show a glimpse this frame.
 		List<Drawable> drawables = new ArrayList<>();
 		Set<Long> hiddenPositions = new HashSet<>();
 		for (PortalRecord record : store.all()) {
-			if (!record.auto.hasCapture || !record.dimension.equals(dimension)) {
+			boolean manualActive = record.manual.hasCapture && record.manual.pinned;
+			if ((!record.auto.hasCapture && !manualActive) || !record.dimension.equals(dimension)) {
 				continue;
 			}
 			// A portal being ghosted for a capture must not photobomb it (§3.2 step 3).
@@ -714,7 +722,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		VertexConsumer vc = consumers.getBuffer(RenderLayer.getItemEntityTranslucentCull(texture));
 		for (BlockPos pos : drawable.blocks()) {
 			emitFace(entry, vc, pos, b, axisX, drawable.viewerOnFaceA(), drawable.glimpseAlpha(),
-					0.0F, 0.0F, 1.0F, 1.0F, 0.0F);
+					255, 255, 255, 0.0F, 0.0F, 1.0F, 1.0F, 0.0F);
 		}
 	}
 
@@ -731,6 +739,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			// stretching across the plane, so the swirl keeps its vanilla scale. Only the
 			// viewer-side face is drawn — the far face never shines through (vanilla behavior).
 			emitFace(entry, vc, pos, b, axisX, drawable.viewerOnFaceA(), alpha,
+					255, 255, 255,
 					sprite.getMinU(), sprite.getMinV(), sprite.getMaxU(), sprite.getMaxV(), VEIL_OFFSET);
 		}
 	}
@@ -744,7 +753,8 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	 * @param push   extra offset along the face normal (the veil floats in front of the glimpse)
 	 */
 	private static void emitFace(MatrixStack.Entry entry, VertexConsumer vc, BlockPos pos, Bounds b,
-			boolean axisX, boolean faceA, int alpha, float u0, float v0, float u1, float v1, float push) {
+			boolean axisX, boolean faceA, int alpha, int red, int green, int blue,
+			float u0, float v0, float u1, float v1, float push) {
 		float x = pos.getX();
 		float y = pos.getY();
 		float z = pos.getZ();
@@ -819,10 +829,10 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		// Both windings — the culling render layer keeps whichever faces the camera, so we never
 		// have to guess vertex order per face.
 		for (int i = 0; i < 4; i++) {
-			vertex(entry, vc, px[i], py[i], pz[i], uu[i], vv[i], alpha);
+			vertex(entry, vc, px[i], py[i], pz[i], uu[i], vv[i], alpha, red, green, blue);
 		}
 		for (int i = 3; i >= 0; i--) {
-			vertex(entry, vc, px[i], py[i], pz[i], uu[i], vv[i], alpha);
+			vertex(entry, vc, px[i], py[i], pz[i], uu[i], vv[i], alpha, red, green, blue);
 		}
 	}
 
@@ -836,9 +846,9 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	}
 
 	private static void vertex(MatrixStack.Entry entry, VertexConsumer vc, float x, float y, float z,
-			float u, float v, int alpha) {
+			float u, float v, int alpha, int red, int green, int blue) {
 		vc.vertex(entry.getPositionMatrix(), x, y, z)
-				.color(255, 255, 255, alpha)
+				.color(red, green, blue, alpha)
 				.texture(u, v)
 				.overlay(OverlayTexture.DEFAULT_UV)
 				.light(LightmapTextureManager.MAX_LIGHT_COORDINATE)

@@ -59,11 +59,13 @@ public final class GlimpseTextures {
 
 		long version = record.updatedAt;
 		Path dir = baseDir.resolve(record.id.toString());
+		// A pinned manual capture wins over the automatic one (both in the same folder, "manual_" prefix).
+		String p = record.manual.hasCapture && record.manual.pinned ? "manual_" : "";
 		String[][] pairs = record.axis == Direction.Axis.X
-				? new String[][] { { "postcard_north.png", "postcard_south.png" },
-						{ "postcard_west.png", "postcard_east.png" } }
-				: new String[][] { { "postcard_west.png", "postcard_east.png" },
-						{ "postcard_north.png", "postcard_south.png" } };
+				? new String[][] { { p + "postcard_north.png", p + "postcard_south.png" },
+						{ p + "postcard_west.png", p + "postcard_east.png" } }
+				: new String[][] { { p + "postcard_west.png", p + "postcard_east.png" },
+						{ p + "postcard_north.png", p + "postcard_south.png" } };
 
 		Util.getIoWorkerExecutor().execute(() -> {
 			NativeImage imageA = null;

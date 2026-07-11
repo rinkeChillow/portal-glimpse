@@ -177,6 +177,17 @@ public final class TravelTracker {
 
 		relink(store, origin, destination);
 
+		// This trip's auto capture is saved to the ORIGIN record (it displays the side you came from).
+		// If THAT record already has a pinned manual capture, the auto glimpse would just be overridden
+		// by it — so skip it, and only it. The linked portal captures independently on its own trips.
+		// (Players who curate a side manually never pay the auto-capture cost for that side, §3.4.)
+		if (origin.manual.hasCapture && origin.manual.pinned) {
+			PortalGlimpse.LOGGER.info("Portal Glimpse: manual capture pinned on {} — skipping its auto capture",
+					origin.id);
+			finish();
+			return;
+		}
+
 		long sinceLast = System.currentTimeMillis() - origin.auto.timestamp;
 		if (origin.auto.hasCapture && sinceLast < CAPTURE_COOLDOWN_MS) {
 			PortalGlimpse.LOGGER.info("Portal Glimpse: cooldown active for {} ({}s left), links refreshed only",

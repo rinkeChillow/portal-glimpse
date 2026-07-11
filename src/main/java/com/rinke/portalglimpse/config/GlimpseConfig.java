@@ -34,6 +34,9 @@ public final class GlimpseConfig {
 	public int netherVeilAlpha = 51;         // 0..255 (~20%) — Nether view, seen from the Overworld
 	public int overworldVeilAlpha = 102;     // 0..255 (~40%) — Overworld view, seen from the Nether
 
+	// UI-only state (not a render setting): whether the "drag to look around" hint has been dismissed.
+	public boolean previewHintSeen = false;
+
 	private GlimpseConfig() {
 	}
 

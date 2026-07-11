@@ -50,10 +50,14 @@ public final class PanoramaTextures {
 
 		long version = record.updatedAt;
 		Path dir = baseDir.resolve(record.id.toString());
+		// A pinned manual capture (player-curated) wins over the automatic one; both live in the same
+		// folder distinguished by a "manual_" prefix. updatedAt changes when the slot is toggled, so
+		// this cache reloads the right set automatically.
+		String prefix = record.manual.hasCapture && record.manual.pinned ? "manual_" : "";
 		Util.getIoWorkerExecutor().execute(() -> {
 			NativeImage[] images = new NativeImage[6];
 			for (int i = 0; i < 6; i++) {
-				images[i] = tryRead(dir.resolve("panorama_" + i + ".png"));
+				images[i] = tryRead(dir.resolve(prefix + "panorama_" + i + ".png"));
 			}
 			client.execute(() -> store(client, record.id, version, images));
 		});
