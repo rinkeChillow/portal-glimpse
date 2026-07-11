@@ -130,7 +130,9 @@ public final class CaptureManager {
 			performCapture(client, cameraPortal, saveTo, manualCapture);
 		} catch (Exception e) {
 			PortalGlimpse.LOGGER.warn("Portal Glimpse: capture failed", e);
-			feedback(client, "Capture failed — check logs", Formatting.RED);
+			feedback(client, e instanceof java.io.IOException
+					? "Couldn't save glimpse — disk full or no write access"
+					: "Capture failed — check logs", Formatting.RED);
 		} finally {
 			GhostController.deactivate(client);
 			phase = Phase.IDLE;

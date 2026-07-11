@@ -8,6 +8,7 @@ import com.rinke.portalglimpse.data.PortalRecord;
 import com.rinke.portalglimpse.data.PortalStore;
 import com.rinke.portalglimpse.detect.PortalDetection;
 import com.rinke.portalglimpse.mixin.DownloadingTerrainScreenAccessor;
+import com.rinke.portalglimpse.render.GlimpseSettings;
 
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
@@ -17,8 +18,11 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.DownloadingTerrainScreen;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.world.ClientWorld;
+import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.world.chunk.ChunkStatus;
 
 /**
  * The automatic glimpse lifecycle (design doc §3.2): when the player travels through a Nether
@@ -37,14 +41,11 @@ public final class TravelTracker {
 	/** How recently the player must have touched the origin portal for a dim change to count as travel. */
 	private static final long ORIGIN_FRESH_MS = 15_000;
 
-	/** Ticks to wait for the arrival portal before giving up (safety valve — never softlock). */
-	private static final int ARRIVAL_TIMEOUT_TICKS = 200;
+	/** Ticks to wait for the arrival portal + capture-radius chunks before giving up (never softlock). */
+	private static final int ARRIVAL_TIMEOUT_TICKS = 600;
 
 	/** Max squared distance between player and a portal anchor to accept it as the arrival portal. */
 	private static final double MAX_ARRIVAL_DIST_SQ = 32 * 32;
-
-	/** Auto-capture cooldown per portal (§3.3, default 5 minutes; configurable later). */
-	private static final long CAPTURE_COOLDOWN_MS = 5 * 60 * 1000;
 
 	private enum State {
 		IDLE,
@@ -58,6 +59,9 @@ public final class TravelTracker {
 	private static long originTouchTime;
 	private static Identifier lastWorldKey;
 	private static int arrivalTicksLeft;
+
+	/** Player health when the hold began — if it drops, the player is under attack: release the screen. */
+	private static float holdStartHealth = -1.0F;
 
 	/** Read by DownloadingTerrainScreenMixin (render thread) to keep the screen up. */
 	private static volatile boolean holdLoadingScreen;
@@ -131,13 +135,22 @@ public final class TravelTracker {
 		state = State.AWAITING_ARRIVAL;
 		arrivalTicksLeft = ARRIVAL_TIMEOUT_TICKS;
 		holdLoadingScreen = true;
+		ClientPlayerEntity player = MinecraftClient.getInstance().player;
+		holdStartHealth = player != null ? player.getHealth() : -1.0F;
 		PortalGlimpse.LOGGER.info("Portal Glimpse: portal travel {} -> {}, awaiting arrival portal",
 				originDimension, newWorldKey);
 	}
 
 	private static void tickAwaitArrival(MinecraftClient client, ClientPlayerEntity player, Identifier worldKey) {
+		// If the player takes damage while we're holding the loading screen (a mob got to them during
+		// the chunk wait), release it immediately so they can defend themselves — don't hold + hurt.
+		if (holdStartHealth >= 0.0F && player.getHealth() < holdStartHealth - 0.01F) {
+			abort("player took damage during the hold — releasing the loading screen");
+			return;
+		}
 		if (--arrivalTicksLeft <= 0) {
-			abort("arrival portal not found in time");
+			feedback(player, "Glimpse skipped — terrain wasn't ready in time", Formatting.GRAY);
+			abort("arrival portal / capture-radius chunks not ready in time");
 			return;
 		}
 		PortalStore store = PortalDetection.store();
@@ -169,6 +182,13 @@ public final class TravelTracker {
 			return; // registration may still be in flight — keep waiting until timeout
 		}
 
+		// Hold the loading screen until the configured radius of chunks around the arrival portal has
+		// loaded, so the captured panorama shows real terrain instead of ungenerated void. The timeout
+		// still bounds the wait so it can never softlock.
+		if (!captureChunksLoaded(client, destination)) {
+			return;
+		}
+
 		PortalRecord origin = store.get(originId);
 		if (origin == null) {
 			abort("origin record vanished");
@@ -188,10 +208,11 @@ public final class TravelTracker {
 			return;
 		}
 
+		long cooldownMs = GlimpseSettings.autoCaptureCooldownMinutes * 60_000L;
 		long sinceLast = System.currentTimeMillis() - origin.auto.timestamp;
-		if (origin.auto.hasCapture && sinceLast < CAPTURE_COOLDOWN_MS) {
+		if (origin.auto.hasCapture && sinceLast < cooldownMs) {
 			PortalGlimpse.LOGGER.info("Portal Glimpse: cooldown active for {} ({}s left), links refreshed only",
-					origin.id, (CAPTURE_COOLDOWN_MS - sinceLast) / 1000);
+					origin.id, (cooldownMs - sinceLast) / 1000);
 			finish();
 			return;
 		}
@@ -199,6 +220,36 @@ public final class TravelTracker {
 		state = State.CAPTURING;
 		if (!CaptureManager.request(client, destination, origin, TravelTracker::finish)) {
 			finish(); // a manual capture is mid-flight — skip this one gracefully
+		}
+	}
+
+	/**
+	 * Whether the configured chunk radius (each direction) around the portal is loaded to FULL status.
+	 * Radius 0 disables the wait (capture as soon as vanilla terrain is ready).
+	 */
+	private static boolean captureChunksLoaded(MinecraftClient client, PortalRecord portal) {
+		int radius = GlimpseSettings.captureChunkRadius;
+		if (radius <= 0 || client.world == null) {
+			return true;
+		}
+		// Chunks past the client's render distance never load, so never wait for them (else we'd hold
+		// the screen until the timeout). The config screen warns when the radius exceeds render distance.
+		radius = Math.min(radius, client.options.getClampedViewDistance());
+		int centerX = portal.anchor.getX() >> 4;
+		int centerZ = portal.anchor.getZ() >> 4;
+		for (int dx = -radius; dx <= radius; dx++) {
+			for (int dz = -radius; dz <= radius; dz++) {
+				if (client.world.getChunkManager().getChunk(centerX + dx, centerZ + dz, ChunkStatus.FULL, false) == null) {
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+	private static void feedback(ClientPlayerEntity player, String text, Formatting color) {
+		if (player != null) {
+			player.sendMessage(Text.literal("[Portal Glimpse] " + text).formatted(color), true);
 		}
 	}
 

@@ -33,6 +33,8 @@ public final class GlimpseConfig {
 	public float panoramaFovDegrees = 60.0F; // 20..60 (half field-of-view)
 	public int netherVeilAlpha = 51;         // 0..255 (~20%) — Nether view, seen from the Overworld
 	public int overworldVeilAlpha = 102;     // 0..255 (~40%) — Overworld view, seen from the Nether
+	public int autoCaptureCooldownMinutes = 5; // 0..60 (0 = every eligible travel)
+	public int captureChunkRadius = 4;       // 0..8 chunks each direction to load before auto capture
 
 	// UI-only state (not a render setting): whether the "drag to look around" hint has been dismissed.
 	public boolean previewHintSeen = false;
@@ -85,11 +87,15 @@ public final class GlimpseConfig {
 		GlimpseSettings.panoramaFovDegrees = panoramaFovDegrees;
 		GlimpseSettings.netherVeilAlpha = netherVeilAlpha;
 		GlimpseSettings.overworldVeilAlpha = overworldVeilAlpha;
+		GlimpseSettings.autoCaptureCooldownMinutes = autoCaptureCooldownMinutes;
+		GlimpseSettings.captureChunkRadius = captureChunkRadius;
 	}
 
 	private void clamp() {
 		netherVeilAlpha = Math.max(0, Math.min(255, netherVeilAlpha));
 		overworldVeilAlpha = Math.max(0, Math.min(255, overworldVeilAlpha));
 		panoramaFovDegrees = Math.max(20.0F, Math.min(60.0F, panoramaFovDegrees));
+		autoCaptureCooldownMinutes = Math.max(0, Math.min(60, autoCaptureCooldownMinutes));
+		captureChunkRadius = Math.max(0, Math.min(8, captureChunkRadius));
 	}
 }

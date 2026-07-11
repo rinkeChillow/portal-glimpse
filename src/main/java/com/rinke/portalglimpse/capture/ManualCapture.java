@@ -9,6 +9,7 @@ import com.rinke.portalglimpse.render.ManualCaptureFlash;
 
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 
+import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.player.PlayerEntity;
@@ -50,6 +51,12 @@ public final class ManualCapture {
 		}
 		PortalRecord record = portalAt(client, hit.getBlockPos());
 		if (record == null) {
+			// Clicked a real portal block that isn't registered yet (chunk-scan lag) — say so instead of
+			// silently doing nothing. Non-portal blocks fall through so vanilla right-click still works.
+			if (world.getBlockState(hit.getBlockPos()).isOf(Blocks.NETHER_PORTAL)) {
+				feedback(client, "Portal still loading — try again in a moment", Formatting.YELLOW);
+				return ActionResult.SUCCESS;
+			}
 			return ActionResult.PASS;
 		}
 		toggle(client, record);

@@ -18,6 +18,7 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
 
 /**
@@ -95,6 +96,33 @@ public final class GlimpseConfigScreen {
 				Text.translatable("portal-glimpse.config.overworldVeilOpacity"),
 				() -> overworldVeil.getValue(), pickPanorama(client, false)));
 		general.addEntry(overworldVeil);
+
+		general.addEntry(entry.startIntSlider(
+						Text.translatable("portal-glimpse.config.captureCooldown"),
+						config.autoCaptureCooldownMinutes, 0, 60)
+				.setDefaultValue(5)
+				.setTextGetter(v -> v == 0 ? Text.translatable("portal-glimpse.config.captureCooldown.off")
+						: Text.literal(v + " min"))
+				.setTooltip(Text.translatable("portal-glimpse.config.captureCooldown.tooltip"))
+				.setSaveConsumer(v -> config.autoCaptureCooldownMinutes = v)
+				.build());
+
+		general.addEntry(entry.startIntSlider(
+						Text.translatable("portal-glimpse.config.captureRadius"),
+						config.captureChunkRadius, 0, 8)
+				.setDefaultValue(4)
+				.setTextGetter(v -> {
+					int viewDistance = MinecraftClient.getInstance().options.getClampedViewDistance();
+					// Warn (but still allow) when the radius exceeds render distance — those chunks never
+					// load, so the wait would be capped there anyway.
+					return v > viewDistance
+							? Text.translatable("portal-glimpse.config.captureRadius.overRender", v, viewDistance)
+									.formatted(Formatting.GOLD)
+							: Text.literal(v + " chunks");
+				})
+				.setTooltip(Text.translatable("portal-glimpse.config.captureRadius.tooltip"))
+				.setSaveConsumer(v -> config.captureChunkRadius = v)
+				.build());
 
 		// The two player keybinds, also editable here (they remain in the vanilla Controls menu too).
 		general.addEntry(entry.fillKeybindingField(

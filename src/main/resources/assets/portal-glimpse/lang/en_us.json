@@ -13,6 +13,12 @@
 	"portal-glimpse.config.netherVeilOpacity.tooltip": "Swirl opacity over the Nether view — what you see looking into portals while in the Overworld. 0% = clear window, 100% = full vanilla swirl.",
 	"portal-glimpse.config.overworldVeilOpacity": "Overworld Veil Opacity",
 	"portal-glimpse.config.overworldVeilOpacity.tooltip": "Swirl opacity over the Overworld view — what you see looking into portals while in the Nether. 0% = clear window, 100% = full vanilla swirl.",
+	"portal-glimpse.config.captureCooldown": "Auto-Capture Cooldown",
+	"portal-glimpse.config.captureCooldown.off": "Off",
+	"portal-glimpse.config.captureCooldown.tooltip": "Minimum time before a portal re-captures its auto glimpse on travel. Off = capture every eligible trip.",
+	"portal-glimpse.config.captureRadius": "Capture Chunk Radius",
+	"portal-glimpse.config.captureRadius.tooltip": "Chunks in each direction that must load around the arrival portal before an auto capture. Higher = more terrain in the glimpse, but the loading screen is held longer. 0 = capture as soon as vanilla terrain is ready.",
+	"portal-glimpse.config.captureRadius.overRender": "%1$s chunks — over your render distance (%2$s)",
 	"portal-glimpse.preview.clickForBigger": "Click for a bigger preview",
 	"portal-glimpse.preview.dragHint": "Drag left / right to look around"
 }

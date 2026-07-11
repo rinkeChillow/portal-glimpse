@@ -19,6 +19,13 @@ public final class GlimpseSettings {
 	public static int netherVeilAlpha = 51;     // ~20% — the Nether view, seen from the Overworld
 	public static int overworldVeilAlpha = 102; // ~40% — the Overworld view, seen from the Nether
 
+	/** Auto-capture cooldown per portal, in minutes (0 = capture on every eligible travel). */
+	public static int autoCaptureCooldownMinutes = 5;
+
+	/** Chunks (each direction) that must be loaded around the arrival portal before an auto capture —
+	 * the loading screen is held until they are, so the panorama shows real terrain, not void. */
+	public static int captureChunkRadius = 4;
+
 	/** Master toggle for the glimpse view layer (H). The modded veil renders either way. */
 	public static boolean glimpsesVisible = true;
 
