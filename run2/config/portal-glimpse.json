@@ -1,9 +1,0 @@
-{
-  "glimpsesVisible": true,
-  "panoramaFovDegrees": 60.0,
-  "netherVeilAlpha": 51,
-  "overworldVeilAlpha": 102,
-  "autoCaptureCooldownMinutes": 5,
-  "captureChunkRadius": 4,
-  "previewHintSeen": false
-}
