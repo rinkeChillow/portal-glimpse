@@ -1,10 +1,15 @@
 package com.rinke.portalglimpse.mixin;
 
+import com.rinke.portalglimpse.render.PortalEntityMask;
 import com.rinke.portalglimpse.render.PortalGlowOutline;
 
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gl.PostEffectProcessor;
+import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.render.WorldRenderer;
+import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.player.PlayerEntity;
 
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -43,6 +48,20 @@ public abstract class WorldRendererMixin {
 		}
 		entityOutlinePostProcessor.render(this.client.getRenderTickCounter().getTickDelta(true));
 		this.client.getFramebuffer().beginWrite(false);
+	}
+
+	/**
+	 * Entity-over-panorama (§ pt.14): a player standing just behind a glimpse portal's plane is skipped
+	 * here and re-rendered OVER the finished portal by {@link com.rinke.portalglimpse.render.VanillaGlimpseRenderer}
+	 * so they read as standing IN the destination. Detection runs now (entity pass); the re-render consumes
+	 * what it collects after the portal's own passes.
+	 */
+	@Inject(method = "renderEntity", at = @At("HEAD"), cancellable = true)
+	private void portalglimpse$deferNearPlayer(Entity entity, double cameraX, double cameraY, double cameraZ,
+			float tickDelta, MatrixStack matrices, VertexConsumerProvider vertexConsumers, CallbackInfo ci) {
+		if (entity instanceof PlayerEntity player && PortalEntityMask.shouldDefer(player)) {
+			ci.cancel();
+		}
 	}
 }
 

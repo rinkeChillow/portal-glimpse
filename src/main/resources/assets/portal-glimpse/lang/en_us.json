@@ -7,6 +7,8 @@
 	"portal-glimpse.config.category.general": "General",
 	"portal-glimpse.config.glimpsesVisible": "Enable Portal Glimpse",
 	"portal-glimpse.config.glimpsesVisible.tooltip": "Master toggle for the mod. Turn off for plain, 100% vanilla nether portals.",
+	"portal-glimpse.config.entityOverPanorama": "Show Players Through Portals",
+	"portal-glimpse.config.entityOverPanorama.tooltip": "A player standing in a portal is drawn through the glimpse, so they look like they're standing in the destination dimension.",
 	"portal-glimpse.config.panoramaFov": "Panorama Field of View",
 	"portal-glimpse.config.panoramaFov.tooltip": "How much of the destination the portal frames. Higher = a wider view with smaller-looking content.",
 	"portal-glimpse.config.netherVeilOpacity": "Nether Veil Opacity",

@@ -55,6 +55,13 @@ public final class GlimpseConfigScreen {
 				.setSaveConsumer(v -> config.glimpsesVisible = v)
 				.build());
 
+		general.addEntry(entry.startBooleanToggle(
+						Text.translatable("portal-glimpse.config.entityOverPanorama"), config.entityOverPanorama)
+				.setDefaultValue(true)
+				.setTooltip(Text.translatable("portal-glimpse.config.entityOverPanorama.tooltip"))
+				.setSaveConsumer(v -> config.entityOverPanorama = v)
+				.build());
+
 		general.addEntry(entry.startIntSlider(
 						Text.translatable("portal-glimpse.config.panoramaFov"),
 						Math.round(config.panoramaFovDegrees), 20, 60)

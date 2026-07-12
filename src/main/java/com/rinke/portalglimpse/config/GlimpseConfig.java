@@ -30,6 +30,7 @@ public final class GlimpseConfig {
 
 	// Mirrors of the runtime fields in GlimpseSettings that players are allowed to set.
 	public boolean glimpsesVisible = true;
+	public boolean entityOverPanorama = true; // show players standing in a portal, through the panorama
 	public float panoramaFovDegrees = 60.0F; // 20..60 (half field-of-view)
 	public int netherVeilAlpha = 51;         // 0..255 (~20%) — Nether view, seen from the Overworld
 	public int overworldVeilAlpha = 102;     // 0..255 (~40%) — Overworld view, seen from the Nether
@@ -84,6 +85,7 @@ public final class GlimpseConfig {
 	/** Copy the persistent values into the runtime settings the renderer reads. */
 	public void apply() {
 		GlimpseSettings.glimpsesVisible = glimpsesVisible;
+		GlimpseSettings.entityOverPanorama = entityOverPanorama;
 		GlimpseSettings.panoramaFovDegrees = panoramaFovDegrees;
 		GlimpseSettings.netherVeilAlpha = netherVeilAlpha;
 		GlimpseSettings.overworldVeilAlpha = overworldVeilAlpha;

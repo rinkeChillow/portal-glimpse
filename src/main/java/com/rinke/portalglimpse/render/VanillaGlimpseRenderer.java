@@ -27,6 +27,7 @@ import net.minecraft.client.gl.ShaderProgram;
 import net.minecraft.client.render.BufferBuilder;
 import net.minecraft.client.render.BufferRenderer;
 import net.minecraft.client.render.BuiltBuffer;
+import net.minecraft.client.render.GameRenderer;
 import net.minecraft.client.render.LightmapTextureManager;
 import net.minecraft.client.render.OverlayTexture;
 import net.minecraft.client.render.RenderLayer;
@@ -35,13 +36,16 @@ import net.minecraft.client.render.VertexConsumer;
 import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.render.VertexFormat;
 import net.minecraft.client.render.VertexFormats;
+import net.minecraft.client.render.entity.EntityRenderDispatcher;
 import net.minecraft.client.texture.Sprite;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.client.world.ClientWorld;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 
 /**
@@ -134,6 +138,11 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	 * would clip through it. Instead lift that box's bottom to this height above the opening bottom
 	 * (~1.1 above the block's base) so it clears the block: no z-fight, no poke-through. */
 	private static final float BOTTOM_LIFT = 0.11F;
+
+	/** Minimum depth (blocks) of the invisible occluder cage behind an occupied portal — deep enough to
+	 * clear a player standing 1 block in (plus his body), so the cage never clips him. Grows with the
+	 * portal's size (its "diameter") for wider angular coverage. */
+	private static final float DEPTH_CAGE_MIN = 2.0F;
 
 	/** In-block positions of the portal plane quads, matching the vanilla portal model. */
 	private static final float PLANE_LOW = 6.0F / 16.0F;
@@ -384,31 +393,105 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		matrices.translate(-cameraPos.x, -cameraPos.y, -cameraPos.z);
 		MatrixStack.Entry entry = matrices.peek();
 		VertexConsumerProvider consumers = context.consumers();
-
-		// Pass 1: the glimpses. Flushed to the framebuffer before the veils are emitted so the
-		// veil always composites OVER the glimpse (§4.3 "a ghost dancing over the glimpse").
+		VertexConsumerProvider.Immediate immediate =
+				consumers instanceof VertexConsumerProvider.Immediate imm ? imm : null;
+		boolean anyAffected = false;
 		for (Drawable drawable : drawables) {
-			emitGlimpse(entry, consumers, drawable);
+			if (PortalEntityMask.isAffected(drawable.record().id)) {
+				anyAffected = true;
+				break;
+			}
 		}
-		if (consumers instanceof VertexConsumerProvider.Immediate immediate) {
+
+		// Pass 1: the glimpses. Flushed to the framebuffer before the veils are emitted so the veil always
+		// composites OVER the glimpse (§4.3 "a ghost dancing over the glimpse"). A portal a player is
+		// standing in is drawn in a SECOND flush WITHOUT depth-write, so the player (re-rendered afterwards
+		// at real depth) isn't occluded by its own glimpse while real geometry still is.
+		for (Drawable drawable : drawables) {
+			if (!PortalEntityMask.isAffected(drawable.record().id)) {
+				emitGlimpse(entry, consumers, drawable);
+			}
+		}
+		if (immediate != null) {
 			immediate.draw();
 		}
+		if (anyAffected) {
+			for (Drawable drawable : drawables) {
+				if (PortalEntityMask.isAffected(drawable.record().id)) {
+					emitGlimpse(entry, consumers, drawable);
+				}
+			}
+			if (immediate != null) {
+				RenderSystem.depthMask(false);
+				immediate.draw();
+				RenderSystem.depthMask(true);
+			}
+		}
 
-		// Pass 2: the veils — the living vanilla portal sprite, animation and resource packs intact.
+		// Pass 2: the veils — the living vanilla portal sprite, animation and resource packs intact. Same
+		// affected/non-affected split as the glimpse so a portal's swirl doesn't occlude the player in it.
 		Sprite portalSprite = client.getBlockRenderManager().getModels()
 				.getModelParticleSprite(Blocks.NETHER_PORTAL.getDefaultState());
-		VertexConsumer veil = consumers.getBuffer(
-				RenderLayer.getItemEntityTranslucentCull(portalSprite.getAtlasId()));
+		RenderLayer veilLayer = RenderLayer.getItemEntityTranslucentCull(portalSprite.getAtlasId());
 		for (Drawable drawable : drawables) {
-			emitVeil(entry, veil, drawable, portalSprite);
-		}
-			// Flush the veil inside this event too, otherwise its buffer is drained later by vanilla,
-			// which under Fabulous graphics runs after the transparency compositing pass (swirl lost).
-			if (consumers instanceof VertexConsumerProvider.Immediate veilImmediate) {
-				veilImmediate.draw();
+			if (!PortalEntityMask.isAffected(drawable.record().id)) {
+				emitVeil(entry, consumers.getBuffer(veilLayer), drawable, portalSprite);
 			}
+		}
+		// Flush the veil inside this event too, otherwise its buffer is drained later by vanilla, which
+		// under Fabulous graphics runs after the transparency compositing pass (swirl lost).
+		if (immediate != null) {
+			immediate.draw();
+		}
+		if (anyAffected) {
+			for (Drawable drawable : drawables) {
+				if (PortalEntityMask.isAffected(drawable.record().id)) {
+					emitVeil(entry, consumers.getBuffer(veilLayer), drawable, portalSprite);
+				}
+			}
+			if (immediate != null) {
+				RenderSystem.depthMask(false);
+				immediate.draw();
+				RenderSystem.depthMask(true);
+			}
+		}
 
 		matrices.pop();
+
+		// Pass 3: players standing just behind a portal's plane, re-rendered OVER the finished glimpse
+		// (panorama + veil) so they read as standing IN the destination (§ pt.14). The entity pass already
+		// skipped their normal render (WorldRendererMixin); this consumes what it collected.
+		renderNearPlayers(context, cameraPos);
+	}
+
+	/**
+	 * Re-renders the players collected by {@link PortalEntityMask} at their REAL depth, after the portal's
+	 * own overlay passes (panorama/postcard/veil) have drawn WITHOUT writing depth for these portals (see
+	 * {@link PortalEntityMask#isAffected}). So the player composites over the glimpse (painter's order) yet
+	 * is depth-tested against the real world — real blocks in front occlude the player, and the real
+	 * obsidian frame clips them exactly to the opening — the "standing in the destination" look.
+	 */
+	private static void renderNearPlayers(WorldRenderContext context, Vec3d cameraPos) {
+		List<PortalEntityMask.NearPlayer> near = PortalEntityMask.consume();
+		if (near.isEmpty()) {
+			return;
+		}
+		MinecraftClient client = MinecraftClient.getInstance();
+		float tickDelta = client.getRenderTickCounter().getTickDelta(true);
+		EntityRenderDispatcher dispatcher = client.getEntityRenderDispatcher();
+		MatrixStack matrices = context.matrixStack();
+		VertexConsumerProvider.Immediate immediate = client.getBufferBuilders().getEntityVertexConsumers();
+
+		for (PortalEntityMask.NearPlayer np : near) {
+			PlayerEntity player = np.player();
+			double x = MathHelper.lerp((double) tickDelta, player.lastRenderX, player.getX()) - cameraPos.x;
+			double y = MathHelper.lerp((double) tickDelta, player.lastRenderY, player.getY()) - cameraPos.y;
+			double z = MathHelper.lerp((double) tickDelta, player.lastRenderZ, player.getZ()) - cameraPos.z;
+			float yaw = MathHelper.lerp(tickDelta, player.prevYaw, player.getYaw());
+			int light = dispatcher.getLight(player, tickDelta);
+			dispatcher.render(player, x, y, z, yaw, tickDelta, matrices, immediate, light);
+			immediate.draw();
+		}
 	}
 
 	/**
@@ -486,6 +569,9 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		GlUniform radius = shader.getUniform("SphereRadius");
 
 		for (PanoDraw pano : panos) {
+			// A portal a player is standing in skips depth-write, so the player (re-rendered afterwards at
+			// real depth) isn't occluded by its own panorama — real blocks in front still occlude the player.
+			RenderSystem.depthMask(!PortalEntityMask.isAffected(pano.drawable().record().id));
 			for (int i = 0; i < 6; i++) {
 				RenderSystem.setShaderTexture(i, pano.faces()[i]);
 			}
@@ -560,9 +646,79 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			}
 		}
 
+		// Depth-only occluder cages for portals a player is standing in. Those portals drew their panorama
+		// WITHOUT writing depth (so the player isn't occluded by his own glimpse), which also stopped them
+		// occluding the background — clouds and other portals' glimpses would bleed through. Seal each such
+		// portal's volume with an invisible box (open front, grown into the obsidian, extending into the
+		// destination): color-masked so nothing is drawn, but its back + four walls write depth, so the
+		// background is occluded from ANY angle while the open front still shows the panorama and the player.
+		boolean anyCage = false;
+		for (PanoDraw pano : panos) {
+			if (PortalEntityMask.isAffected(pano.drawable().record().id)) {
+				anyCage = true;
+				break;
+			}
+		}
+		if (anyCage) {
+			RenderSystem.setShader(GameRenderer::getPositionProgram);
+			RenderSystem.colorMask(false, false, false, false);
+			RenderSystem.depthMask(true);
+			for (PanoDraw pano : panos) {
+				if (!PortalEntityMask.isAffected(pano.drawable().record().id)) {
+					continue;
+				}
+				boolean axisX = pano.drawable().record().axis == Direction.Axis.X;
+				boolean faceA = pano.drawable().viewerOnFaceA();
+				BufferBuilder buffer = Tessellator.getInstance()
+						.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION);
+				emitDepthCage(buffer, pano.drawable().bounds(), axisX, faceA, cameraPos);
+				BuiltBuffer built = buffer.endNullable();
+				if (built != null) {
+					BufferRenderer.drawWithGlobalProgram(built);
+				}
+			}
+			RenderSystem.colorMask(true, true, true, true);
+		}
+
+		RenderSystem.depthMask(true); // restore for the later passes (a portal above may have cleared it)
 		RenderSystem.enableCull();
 		modelView.popMatrix();
 		RenderSystem.applyModelViewMatrix();
+	}
+
+	/**
+	 * Emits the invisible depth-cage box for one occupied portal: the opening grown by {@link #BOX_MARGIN}
+	 * into the obsidian, open at the front, extending {@code depth} blocks into the destination (away from
+	 * the viewer). Back face + four side walls (no front) as POSITION-only quads, camera-relative. Cull is
+	 * already disabled, so winding is irrelevant.
+	 */
+	private static void emitDepthCage(BufferBuilder buffer, Bounds b, boolean axisX, boolean faceA, Vec3d cam) {
+		float m = BOX_MARGIN;
+		float depth = Math.max(DEPTH_CAGE_MIN, Math.max(b.width(), b.height()));
+		float dest = faceA ? 1.0F : -1.0F; // destination side = away from the viewer
+		float y0 = (float) (b.minY() - m - cam.y);
+		float y1 = (float) (b.maxY() + 1 + m - cam.y);
+		if (axisX) {
+			float front = (float) (b.minZ() + 0.5 - cam.z);
+			float back = front + depth * dest;
+			float x0 = (float) (b.minX() - m - cam.x);
+			float x1 = (float) (b.maxX() + 1 + m - cam.x);
+			quad(buffer, x0, y1, back, x0, y0, back, x1, y0, back, x1, y1, back); // back
+			quad(buffer, x0, y1, front, x1, y1, front, x1, y1, back, x0, y1, back); // top
+			quad(buffer, x0, y0, front, x1, y0, front, x1, y0, back, x0, y0, back); // bottom
+			quad(buffer, x0, y1, front, x0, y0, front, x0, y0, back, x0, y1, back); // left
+			quad(buffer, x1, y1, front, x1, y0, front, x1, y0, back, x1, y1, back); // right
+		} else {
+			float front = (float) (b.minX() + 0.5 - cam.x);
+			float back = front + depth * dest;
+			float z0 = (float) (b.minZ() - m - cam.z);
+			float z1 = (float) (b.maxZ() + 1 + m - cam.z);
+			quad(buffer, back, y1, z0, back, y0, z0, back, y0, z1, back, y1, z1); // back
+			quad(buffer, front, y1, z0, front, y1, z1, back, y1, z1, back, y1, z0); // top
+			quad(buffer, front, y0, z0, front, y0, z1, back, y0, z1, back, y0, z0); // bottom
+			quad(buffer, front, y1, z0, front, y0, z0, back, y0, z0, back, y1, z0); // near-Z
+			quad(buffer, front, y1, z1, front, y0, z1, back, y0, z1, back, y1, z1); // far-Z
+		}
 	}
 
 	private record PanoDraw(Drawable drawable, Identifier[] faces) {

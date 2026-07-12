@@ -29,6 +29,11 @@ public final class GlimpseSettings {
 	/** Master toggle for the glimpse view layer (H). The modded veil renders either way. */
 	public static boolean glimpsesVisible = true;
 
+	/** Entity-over-panorama (§ pt.14): a player standing in a glimpse portal (within half a block of its
+	 * plane) is re-rendered OVER the panorama, scissored to the opening, so they read as standing IN the
+	 * destination dimension. The band is hard-coded (see {@code PortalEntityMask}); this is the on/off. */
+	public static boolean entityOverPanorama = true;
+
 	/** Proximity fade of the 2D postcard as the player approaches (toggle J). Phase 4's panorama
 	 * crossfade will eventually take over the close range this frees up. */
 	public static boolean proximityFade = true;
