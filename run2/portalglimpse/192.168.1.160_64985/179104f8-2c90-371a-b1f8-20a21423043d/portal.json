@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "id": "179104f8-2c90-371a-b1f8-20a21423043d",
+  "dimension": "minecraft:the_nether",
+  "anchor": [
+    -2,
+    50,
+    -1
+  ],
+  "interior": [
+    [
+      -2,
+      50,
+      -1
+    ],
+    [
+      -2,
+      51,
+      -1
+    ],
+    [
+      -1,
+      50,
+      -1
+    ],
+    [
+      -2,
+      52,
+      -1
+    ],
+    [
+      -1,
+      51,
+      -1
+    ],
+    [
+      -1,
+      52,
+      -1
+    ]
+  ],
+  "axis": "X",
+  "auto": {
+    "hasCapture": false,
+    "pinned": false,
+    "timestamp": 0
+  },
+  "manual": {
+    "hasCapture": false,
+    "pinned": false,
+    "timestamp": 0
+  },
+  "createdAt": 1783799336409,
+  "updatedAt": 1783799336409
+}

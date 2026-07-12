@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "id": "227cd1b9-5f2f-3954-a17c-0935e96b9efb",
+  "dimension": "minecraft:overworld",
+  "anchor": [
+    -275,
+    64,
+    115
+  ],
+  "interior": [
+    [
+      -275,
+      64,
+      115
+    ],
+    [
+      -275,
+      65,
+      115
+    ],
+    [
+      -274,
+      64,
+      115
+    ],
+    [
+      -275,
+      66,
+      115
+    ],
+    [
+      -274,
+      65,
+      115
+    ],
+    [
+      -273,
+      64,
+      115
+    ],
+    [
+      -274,
+      66,
+      115
+    ],
+    [
+      -273,
+      65,
+      115
+    ],
+    [
+      -273,
+      66,
+      115
+    ]
+  ],
+  "axis": "X",
+  "auto": {
+    "hasCapture": false,
+    "pinned": false,
+    "timestamp": 0
+  },
+  "manual": {
+    "hasCapture": false,
+    "pinned": false,
+    "timestamp": 0
+  },
+  "createdAt": 1783813921555,
+  "updatedAt": 1783813921555
+}

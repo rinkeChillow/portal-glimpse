@@ -76,6 +76,14 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	 * fades back in when the player steps clear instead of popping. Render-thread only. */
 	private static final Map<UUID, Long> lastSuppressedMillis = new HashMap<>();
 
+	/** Relight fade: when a broken portal is relit at the same coords, re-show the glimpse SLOWLY (2× the
+	 * arrival fade), so a valid portal shows its veil at once but the panorama eases back. */
+	private static final long RELIGHT_FADE_MS = 2L * ARRIVAL_FADE_MS;
+	/** After (re)lighting, hold the glimpse fully hidden (veil only) for this long before fading it in. */
+	private static final long RELIGHT_HOLD_MS = 3000L;
+	private static final Set<UUID> brokenPortals = new HashSet<>();
+	private static final Map<UUID, Long> relightFadeStart = new HashMap<>();
+
 	/** Departure push: while the player stands in a portal its panorama plane is kept at least EYE_PUSH
 	 * blocks in front of the eye so they can't walk through the flat render plane and see its back. It is
 	 * a ONE-WAY ratchet (Math.max in emitPanoramaQuad): on entry the plane STAYS at the portal surface
@@ -324,12 +332,41 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				}
 				present.add(pos);
 			}
-			if (!superseded && !present.isEmpty()) {
+			// Relight fade: track when this portal's blocks go away (broken) and reappear (relit at the
+			// same coords → same deterministic id). On the absent→present transition, start a slow fade
+			// so the panorama eases back in instead of popping. The veil is untouched (a valid portal
+			// shows its swirl immediately).
+			boolean hasBlocks = !superseded && !present.isEmpty();
+			if (hasBlocks) {
+				if (brokenPortals.remove(record.id)) {
+					relightFadeStart.put(record.id, nowMillis);
+				}
+			} else {
+				brokenPortals.add(record.id);
+			}
+			float relightFade = 1.0F;
+			Long relitAt = relightFadeStart.get(record.id);
+			if (relitAt != null) {
+				long relitElapsed = nowMillis - relitAt;
+				if (relitElapsed < RELIGHT_HOLD_MS) {
+					relightFade = 0.0F; // hold ~3s: only the veil shows, no glimpse yet
+				} else {
+					long fadeElapsed = relitElapsed - RELIGHT_HOLD_MS;
+					if (fadeElapsed >= RELIGHT_FADE_MS) {
+						relightFadeStart.remove(record.id);
+					} else {
+						relightFade = fadeElapsed / (float) RELIGHT_FADE_MS;
+					}
+				}
+			}
+
+			if (hasBlocks) {
 				for (BlockPos pos : present) {
 					hiddenPositions.add(pos.asLong());
 				}
 				drawables.add(new Drawable(record, texture, present, bounds, glimpseAlpha, veilAlpha,
-						viewerOnFaceA, arrivalFade * distanceFade * departFade, pushAmount, pushSign, encasement));
+						viewerOnFaceA, arrivalFade * distanceFade * departFade * relightFade,
+						pushAmount, pushSign, encasement));
 			}
 		}
 

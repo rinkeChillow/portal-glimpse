@@ -14,6 +14,22 @@ loom {
 		useLegacyMixinAp = true
 		defaultRefmapName = "portalglimpse.mixins.refmap.json"
 	}
+
+	// A second client run so two dev instances can play multiplayer together: it gets its OWN run
+	// directory (no shared session.lock) and a distinct offline username (no duplicate-UUID kick).
+	// Run the two, LAN-host one, and Direct Connect the other to localhost.
+	runs {
+		client {
+			programArgs("--username", "Dev1")
+		}
+		client2 {
+			client()
+			configName = "Minecraft Client 2"
+			ideConfigGenerated = true
+			runDir = "run2"
+			programArgs("--username", "Dev2")
+		}
+	}
 }
 
 repositories {

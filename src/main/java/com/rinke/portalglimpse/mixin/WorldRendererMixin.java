@@ -45,3 +45,4 @@ public abstract class WorldRendererMixin {
 		this.client.getFramebuffer().beginWrite(false);
 	}
 }
+
