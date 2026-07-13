@@ -12,6 +12,7 @@
 		"ChunkRendererRegionMixin",
 		"DownloadingTerrainScreenAccessor",
 		"DownloadingTerrainScreenMixin",
+		"SodiumLevelSliceMixin",
 		"WorldRendererMixin"
 	],
 	"injectors": {

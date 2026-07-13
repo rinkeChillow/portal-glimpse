@@ -26,6 +26,11 @@ public final class GlimpseRenderState {
 		return hidden.contains(pos.asLong());
 	}
 
+	/** Packed-coordinate variant for allocation-free callers (the Sodium mesher hook). */
+	public static boolean isHidden(long posLong) {
+		return hidden.contains(posLong);
+	}
+
 	/** Update the hidden set; schedules chunk rebuilds around any position that changed. */
 	public static void sync(MinecraftClient client, Set<Long> desired) {
 		Set<Long> current = hidden;

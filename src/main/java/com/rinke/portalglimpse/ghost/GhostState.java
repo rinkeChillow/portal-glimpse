@@ -41,10 +41,15 @@ public final class GhostState {
 
 	/** The state the given position should mesh as while ghosted, or {@code null} if it isn't ghosted. */
 	public static BlockState replacementFor(BlockPos pos) {
+		return replacementFor(pos.asLong());
+	}
+
+	/** Packed-coordinate variant for allocation-free callers (the Sodium mesher hook). */
+	public static BlockState replacementFor(long posLong) {
 		if (!active) {
 			return null;
 		}
-		return replacements.get(pos.asLong());
+		return replacements.get(posLong);
 	}
 
 	/** Activate ghosting; each position maps to the state it should mesh as (an immutable snapshot is taken). */

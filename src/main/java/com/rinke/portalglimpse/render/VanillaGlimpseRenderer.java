@@ -432,6 +432,9 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		// affected/non-affected split as the glimpse so a portal's swirl doesn't occlude the player in it.
 		Sprite portalSprite = client.getBlockRenderManager().getModels()
 				.getModelParticleSprite(Blocks.NETHER_PORTAL.getDefaultState());
+		// Under Sodium the real portal blocks are hidden from its mesh, so it stops animating the
+		// nether-portal sprite (it only ticks sprites it sees rendered). Keep the veil's swirl alive.
+		SodiumCompat.markSpriteActive(portalSprite);
 		RenderLayer veilLayer = RenderLayer.getItemEntityTranslucentCull(portalSprite.getAtlasId());
 		for (Drawable drawable : drawables) {
 			if (!PortalEntityMask.isAffected(drawable.record().id)) {

@@ -1,5 +1,8 @@
 package com.rinke.portalglimpse.render;
 
+import com.rinke.portalglimpse.ghost.GhostController;
+import com.rinke.portalglimpse.ghost.GhostState;
+
 import net.fabricmc.fabric.api.client.message.v1.ClientSendMessageEvents;
 
 import net.minecraft.client.MinecraftClient;
@@ -37,12 +40,15 @@ public final class DebugCommand {
 	private static void toggle() {
 		boolean on = !GlimpseSettings.debugMode;
 		GlimpseSettings.debugMode = on;
+		MinecraftClient client = MinecraftClient.getInstance();
 		if (!on) {
 			// Leaving debug mode: undo the live debug state the (now inert) keybinds can't clear.
 			GlimpseSettings.debugBlockPortalTravel = false;
 			PanoramaDebug.clear();
+			if (GhostState.isActive()) {
+				GhostController.deactivate(client); // restore a frozen ghost so the portal isn't left hidden
+			}
 		}
-		MinecraftClient client = MinecraftClient.getInstance();
 		if (client.player != null) {
 			client.player.sendMessage(Text.literal("[Portal Glimpse] Debug mode: " + (on ? "ON" : "OFF"))
 					.formatted(on ? Formatting.LIGHT_PURPLE : Formatting.GRAY), false);

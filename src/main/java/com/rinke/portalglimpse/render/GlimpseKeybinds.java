@@ -5,6 +5,8 @@ import org.lwjgl.glfw.GLFW;
 import com.rinke.portalglimpse.data.PortalRecord;
 import com.rinke.portalglimpse.data.PortalStore;
 import com.rinke.portalglimpse.detect.PortalDetection;
+import com.rinke.portalglimpse.ghost.GhostController;
+import com.rinke.portalglimpse.ghost.GhostState;
 
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 
@@ -20,7 +22,9 @@ import net.minecraft.util.Identifier;
  * (they're not meant to be rebound — only the developer uses them). All gated behind the hidden
  * {@code /pgdebug} toggle ({@link GlimpseSettings#debugMode}), off by default:
  * Numpad 9/6 veil ±, Numpad 8/2 FOV ±, H glimpses, J postcard fade, K debug cubemap, Numpad 0
- * block-travel. (The Numpad-5 loading-screen hold is polled separately in {@code PortalTransitionView}.)
+ * block-travel, Numpad 1 ghost-freeze (hide+clone the nearest portal with no capture, for testing the
+ * block-hiding under other renderers like Sodium). (The Numpad-5 loading-screen hold is polled
+ * separately in {@code PortalTransitionView}.)
  */
 public final class GlimpseKeybinds {
 
@@ -34,10 +38,11 @@ public final class GlimpseKeybinds {
 	private static final int KEY_FOV_DOWN = GLFW.GLFW_KEY_KP_2;
 	private static final int KEY_DEBUG_PANORAMA = GLFW.GLFW_KEY_K;
 	private static final int KEY_BLOCK_TRAVEL = GLFW.GLFW_KEY_KP_0;
+	private static final int KEY_GHOST_FREEZE = GLFW.GLFW_KEY_KP_1;
 
 	private static final int[] KEYS = {
 			KEY_VEIL_UP, KEY_VEIL_DOWN, KEY_TOGGLE_GLIMPSES, KEY_TOGGLE_FADE,
-			KEY_FOV_UP, KEY_FOV_DOWN, KEY_DEBUG_PANORAMA, KEY_BLOCK_TRAVEL
+			KEY_FOV_UP, KEY_FOV_DOWN, KEY_DEBUG_PANORAMA, KEY_BLOCK_TRAVEL, KEY_GHOST_FREEZE
 	};
 	/** Previous frame's down-state per key, for rising-edge detection. */
 	private static final boolean[] WAS_DOWN = new boolean[KEYS.length];
@@ -119,11 +124,41 @@ public final class GlimpseKeybinds {
 						: "Portal travel restored");
 			}
 		}
+		if (justPressed[8]) {
+			toggleGhostFreeze(client);
+		}
 		// While travel is blocked, keep the client's portal-nausea wobble pinned at zero.
 		if (GlimpseSettings.debugBlockPortalTravel && client.player != null) {
 			client.player.nauseaIntensity = 0.0F;
 			client.player.prevNauseaIntensity = 0.0F;
 		}
+	}
+
+	/**
+	 * Toggle the ghost (obsidian-hide + wall-clone) on the nearest portal, WITHOUT a capture, and hold
+	 * it. Purely a diagnostic: it runs {@link GhostController}'s hide/clone logic and freezes it so the
+	 * effect can be inspected under other renderers (e.g. Sodium) — press once to hide, again to restore.
+	 * Re-pressing recomputes, so newly placed wall blocks around the frame are picked up (toggle off/on).
+	 */
+	private static void toggleGhostFreeze(MinecraftClient client) {
+		if (GhostState.isActive()) {
+			GhostController.deactivate(client);
+			actionbar(client, "Ghost freeze OFF — portal restored");
+			return;
+		}
+		PortalStore store = PortalDetection.store();
+		ClientWorld world = client.world;
+		if (store == null || client.player == null || world == null) {
+			return;
+		}
+		PortalRecord nearest = store.findNearest(client.player.getBlockPos(), world.getRegistryKey().getValue());
+		if (nearest == null) {
+			actionbar(client, "Ghost freeze: no portal nearby");
+			return;
+		}
+		GhostController.activate(client, nearest);
+		actionbar(client, "Ghost freeze ON — obsidian + portal hidden/cloned, no capture "
+				+ "(toggle off/on to recompute after placing blocks)");
 	}
 
 	/** Swap the nearest registered portal's panorama for the labeled debug cubemap (toggle). */
