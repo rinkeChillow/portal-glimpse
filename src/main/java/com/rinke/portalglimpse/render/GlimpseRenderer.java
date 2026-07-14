@@ -24,4 +24,13 @@ public interface GlimpseRenderer {
 	 */
 	default void renderWorld(net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext context) {
 	}
+
+	/**
+	 * Called right after Iris's shader composite (from the Iris pipeline mixin). Used only when a
+	 * shaderpack is active to draw the panorama as a post-composite overlay, since a custom core shader
+	 * can't run inside Iris's deferred pipeline. Uses matrices stashed during {@link #renderWorld}. No-op
+	 * on the vanilla path (and whenever nothing was stashed this frame).
+	 */
+	default void renderAfterShaders() {
+	}
 }

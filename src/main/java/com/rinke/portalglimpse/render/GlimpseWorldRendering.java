@@ -15,6 +15,8 @@ public final class GlimpseWorldRendering {
 	public static void register() {
 		PortalShaders.register();
 		WorldRenderEvents.AFTER_TRANSLUCENT.register(context -> GlimpseRenderers.get().renderWorld(context));
+		// The Iris-shader overlay (renderAfterShaders) is driven by SodiumIrisPipelineMixin instead of a
+		// WorldRenderEvent, because it must run AFTER Iris's composite — later than any Fabric world event.
 		// Manual-capture glow: feed the portal silhouette into the entity-outline buffer before it's
 		// flushed, so vanilla's outline post-process (forced by WorldRendererMixin) glows the edges.
 		WorldRenderEvents.AFTER_ENTITIES.register(PortalGlowOutline::render);

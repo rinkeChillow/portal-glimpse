@@ -65,6 +65,30 @@ public final class GlimpseRenderState {
 		}
 	}
 
+	/**
+	 * Force a re-mesh of every currently-hidden position, even though the set hasn't changed. Toggling an
+	 * Iris shaderpack re-meshes all chunks, which can bring a hidden portal back (no set-diff fires a
+	 * rebuild), so we re-schedule the hidden region when the shader state flips.
+	 */
+	public static void reschedule(MinecraftClient client) {
+		Set<Long> current = hidden;
+		if (client.worldRenderer == null || current.isEmpty()) {
+			return;
+		}
+		int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+		int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+		for (long packed : current) {
+			BlockPos pos = BlockPos.fromLong(packed);
+			minX = Math.min(minX, pos.getX());
+			maxX = Math.max(maxX, pos.getX());
+			minY = Math.min(minY, pos.getY());
+			maxY = Math.max(maxY, pos.getY());
+			minZ = Math.min(minZ, pos.getZ());
+			maxZ = Math.max(maxZ, pos.getZ());
+		}
+		client.worldRenderer.scheduleBlockRenders(minX, minY, minZ, maxX, maxY, maxZ);
+	}
+
 	public static void clear(MinecraftClient client) {
 		sync(client, Collections.emptySet());
 	}

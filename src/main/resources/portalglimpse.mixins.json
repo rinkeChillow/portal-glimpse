@@ -12,6 +12,7 @@
 		"ChunkRendererRegionMixin",
 		"DownloadingTerrainScreenAccessor",
 		"DownloadingTerrainScreenMixin",
+		"IrisPipelineMixin",
 		"SodiumLevelSliceMixin",
 		"WorldRendererMixin"
 	],

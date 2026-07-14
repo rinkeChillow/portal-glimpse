@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import org.joml.Matrix4f;
 import org.joml.Matrix4fStack;
 
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -148,6 +149,18 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	private static final float PLANE_LOW = 6.0F / 16.0F;
 	private static final float PLANE_HIGH = 10.0F / 16.0F;
 
+	// Iris shader path (#4): when a shaderpack is active the panorama can't draw in the deferred pass,
+	// so renderWorld stashes what to draw (+ the exact camera view & projection of this frame) and
+	// renderAfterShaders paints it as an overlay AFTER Iris's composite (driven by the Iris pipeline
+	// mixin, since Fabric's LAST event fires BEFORE the composite). Cleared each frame in renderWorld.
+	private static List<Drawable> deferredPanos;
+	private static Vec3d deferredCam;
+	private static Matrix4f deferredView;
+	private static Matrix4f deferredProjection;
+	private static boolean lastShadersActive;
+	/** Read-only identity, passed as the "world pose" when the overlay sets the full view on the stack. */
+	private static final Matrix4f IDENTITY = new Matrix4f();
+
 	@Override
 	public String name() {
 		return "vanilla";
@@ -155,6 +168,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 
 	@Override
 	public void renderWorld(WorldRenderContext context) {
+		deferredPanos = null; // reset the shader-overlay stash each frame (set below only under shaders)
 		PortalStore store = PortalDetection.store();
 		ClientWorld world = context.world();
 		if (store == null || world == null) {
@@ -380,13 +394,37 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		}
 
 		GlimpseRenderState.sync(client, hiddenPositions);
+
+		// Toggling an Iris shaderpack re-meshes every chunk, which can un-hide a portal (no set-diff to
+		// trigger a rebuild), so re-mesh the hidden region whenever the shader state flips.
+		boolean shaders = IrisCompat.shadersActive();
+		if (shaders != lastShadersActive) {
+			lastShadersActive = shaders;
+			GlimpseRenderState.reschedule(client);
+		}
+
 		if (drawables.isEmpty()) {
+			return;
+		}
+
+		// Under an Iris shaderpack our custom-shader panorama can't render in this deferred pass (Iris
+		// owns the fragment stage). Stash it and bail — renderAfterShaders draws the panorama AND veil as
+		// a post-composite overlay instead. The block-hiding above already ran, so the vanilla swirl is
+		// gone. (The postcard crossfade is skipped under shaders — the panorama is the glimpse there.)
+		if (shaders) {
+			deferredPanos = drawables;
+			deferredCam = cameraPos;
+			// Capture the exact transform this frame uses so the overlay lands identically: the base view
+			// (camera rotation, on the model-view stack now) folded with the world pose, and the projection.
+			deferredView = new Matrix4f(RenderSystem.getModelViewStack())
+					.mul(context.matrixStack().peek().getPositionMatrix());
+			deferredProjection = new Matrix4f(context.projectionMatrix());
 			return;
 		}
 
 		// Pass 0: the parallax panorama, drawn FIRST and sitting just BEHIND the postcard plane, so
 		// the postcard blends over it and fades to reveal it up close (the crossfade, §4.2).
-		renderPanoramas(context, store, cameraPos, drawables);
+		renderPanoramas(context.matrixStack().peek().getPositionMatrix(), store, cameraPos, drawables);
 
 		MatrixStack matrices = context.matrixStack();
 		matrices.push();
@@ -468,6 +506,70 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	}
 
 	/**
+	 * Iris shader path (#4): draws the panorama AFTER the shaderpack has composited the world (from
+	 * {@code WorldRenderEvents.LAST}), as an overlay. Our custom {@code portal_panorama} shader runs here
+	 * unmolested (Iris is done for the frame), depth-testing against the finished scene so real blocks in
+	 * front of the portal still occlude the glimpse. The trade-off is that the glimpse doesn't receive the
+	 * shaderpack's lighting/fog — acceptable for a captured photo of another dimension. No-op unless
+	 * renderWorld stashed panos this frame (which only happens when a shaderpack is active).
+	 */
+	@Override
+	public void renderAfterShaders() {
+		List<Drawable> panos = deferredPanos;
+		Vec3d cam = deferredCam;
+		Matrix4f view = deferredView;
+		Matrix4f projection = deferredProjection;
+		deferredPanos = null;
+		if (panos == null || panos.isEmpty() || view == null || projection == null) {
+			return;
+		}
+		PortalStore store = PortalDetection.store();
+		if (store == null) {
+			return;
+		}
+		MinecraftClient client = MinecraftClient.getInstance();
+		// Iris has finished compositing: the main framebuffer now holds the shaded image AND the scene
+		// depth (Iris preserves it), so draw onto it with depth-test for correct occlusion. Set this
+		// frame's exact view on the stack (composite left ortho matrices behind), draw, restore.
+		client.getFramebuffer().beginWrite(false);
+		RenderSystem.backupProjectionMatrix();
+		RenderSystem.setProjectionMatrix(projection, RenderSystem.getVertexSorting());
+		Matrix4fStack modelView = RenderSystem.getModelViewStack();
+		modelView.pushMatrix();
+		modelView.identity();
+		modelView.mul(view);
+		RenderSystem.applyModelViewMatrix();
+
+		renderPanoramas(IDENTITY, store, cam, panos); // view already on the stack; identity world-pose
+		drawShaderVeil(client, cam, panos);           // our custom swirl, over the panorama
+
+		modelView.popMatrix();
+		RenderSystem.applyModelViewMatrix();
+		RenderSystem.restoreProjectionMatrix();
+	}
+
+	/**
+	 * Draws the veil (the living nether-portal swirl) over the panorama in the Iris overlay pass, using an
+	 * immediate vertex-consumer + this frame's stashed view. Mirrors the vanilla veil pass but without the
+	 * WorldRenderContext (unavailable post-composite). The swirl's animation is kept alive via {@link
+	 * SodiumCompat}, same as the vanilla path.
+	 */
+	private static void drawShaderVeil(MinecraftClient client, Vec3d cameraPos, List<Drawable> drawables) {
+		Sprite portalSprite = client.getBlockRenderManager().getModels()
+				.getModelParticleSprite(Blocks.NETHER_PORTAL.getDefaultState());
+		SodiumCompat.markSpriteActive(portalSprite);
+		RenderLayer veilLayer = RenderLayer.getItemEntityTranslucentCull(portalSprite.getAtlasId());
+		VertexConsumerProvider.Immediate immediate = client.getBufferBuilders().getEntityVertexConsumers();
+		MatrixStack matrices = new MatrixStack();
+		matrices.translate(-cameraPos.x, -cameraPos.y, -cameraPos.z);
+		MatrixStack.Entry entry = matrices.peek();
+		for (Drawable drawable : drawables) {
+			emitVeil(entry, immediate.getBuffer(veilLayer), drawable, portalSprite);
+		}
+		immediate.draw();
+	}
+
+	/**
 	 * Re-renders the players collected by {@link PortalEntityMask} at their REAL depth, after the portal's
 	 * own overlay passes (panorama/postcard/veil) have drawn WITHOUT writing depth for these portals (see
 	 * {@link PortalEntityMask#isAffected}). So the player composites over the glimpse (painter's order) yet
@@ -526,7 +628,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	 * fragment's view ray (its camera-relative position) selects and samples one of the six faces,
 	 * so the view shifts with real perspective as the player moves.
 	 */
-	private static void renderPanoramas(WorldRenderContext context, PortalStore store, Vec3d cameraPos,
+	private static void renderPanoramas(Matrix4f worldPose, PortalStore store, Vec3d cameraPos,
 			List<Drawable> drawables) {
 		ShaderProgram shader = PortalShaders.panorama();
 		if (shader == null) {
@@ -557,7 +659,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		// swimming like a held item. Camera-relative vertices land in view space.
 		Matrix4fStack modelView = RenderSystem.getModelViewStack();
 		modelView.pushMatrix();
-		modelView.mul(context.matrixStack().peek().getPositionMatrix());
+		modelView.mul(worldPose);
 		RenderSystem.applyModelViewMatrix();
 
 		RenderSystem.enableBlend();
