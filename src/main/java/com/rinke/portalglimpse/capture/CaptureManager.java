@@ -9,6 +9,8 @@ import com.rinke.portalglimpse.data.PortalRecord;
 import com.rinke.portalglimpse.data.PortalStore;
 import com.rinke.portalglimpse.detect.PortalDetection;
 import com.rinke.portalglimpse.ghost.GhostController;
+import com.rinke.portalglimpse.render.IrisCompat;
+import com.rinke.portalglimpse.render.SodiumCompat;
 
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 
@@ -47,13 +49,22 @@ public final class CaptureManager {
 	/** Ticks to wait after ghosting so the portal's chunk sections finish re-meshing before capture. */
 	private static final int GHOST_SETTLE_TICKS = 8;
 
+	/** Max extra ticks to wait for Sodium's async chunk meshes before capturing anyway (never softlock).
+	 * Sodium builds meshes off-thread, so chunk-data being loaded isn't enough — the offscreen render is
+	 * blank until the meshes exist. Vanilla reports ready immediately, so this wait is a no-op there. */
+	private static final int SODIUM_TERRAIN_WAIT_TICKS = 200;
+
 	private enum Phase {
 		IDLE,
-		SETTLING
+		SETTLING,
+		/** A multi-frame (shader) capture is running; it drives itself from the render hook and is finalised
+		 * here once {@link CaptureRenderer#isActive()} flips false. */
+		CAPTURING
 	}
 
 	private static Phase phase = Phase.IDLE;
 	private static int ticksLeft;
+	private static int sodiumWaitLeft;
 	private static PortalRecord cameraPortal;
 	private static PortalRecord saveTo;
 	private static boolean manualCapture;
@@ -115,43 +126,99 @@ public final class CaptureManager {
 		GhostController.activate(client, camera); // ghost + targeted chunk rebuild
 		phase = Phase.SETTLING;
 		ticksLeft = GHOST_SETTLE_TICKS;
+		sodiumWaitLeft = SODIUM_TERRAIN_WAIT_TICKS;
 		return true;
 	}
 
 	private static void onTick(MinecraftClient client) {
+		if (phase == Phase.CAPTURING) {
+			// Hold the portal-nausea wobble off for the whole multi-frame capture — it decays over a couple
+			// seconds after travel and would warp the settling faces. The capture drives itself frame-by-frame
+			// from the render hook; when it finishes (isActive() false) we mark the record and clean up.
+			if (client.player != null) {
+				client.player.nauseaIntensity = 0.0F;
+				client.player.prevNauseaIntensity = 0.0F;
+			}
+			if (!CaptureRenderer.isActive()) {
+				PortalStore store = PortalDetection.store();
+				if (store != null && saveTo != null) {
+					markCaptured(client, store, saveTo, manualCapture);
+				}
+				finishCapture(client);
+			}
+			return;
+		}
 		if (phase != Phase.SETTLING) {
 			return;
 		}
 		if (--ticksLeft > 0) {
 			return;
 		}
-		Runnable callback = onFinished;
+		// Sodium builds chunk meshes asynchronously, so the fixed settle above (and even loaded chunk
+		// DATA) doesn't guarantee anything is renderable yet — the offscreen capture would be a blank sky.
+		// Hold until Sodium's build queue drains, bounded so it can never softlock. No-op under vanilla.
+		if (!SodiumCompat.isTerrainReady() && sodiumWaitLeft-- > 0) {
+			return;
+		}
 		try {
-			performCapture(client, cameraPortal, saveTo, manualCapture);
+			if (startCapture(client, cameraPortal, saveTo, manualCapture)) {
+				phase = Phase.CAPTURING; // multi-frame (shader) capture: finalised above once it completes
+				return;
+			}
 		} catch (Exception e) {
 			PortalGlimpse.LOGGER.warn("Portal Glimpse: capture failed", e);
 			feedback(client, e instanceof java.io.IOException
 					? "Couldn't save glimpse — disk full or no write access"
 					: "Capture failed — check logs", Formatting.RED);
-		} finally {
-			GhostController.deactivate(client);
-			phase = Phase.IDLE;
-			cameraPortal = null;
-			saveTo = null;
-			manualCapture = false;
-			onFinished = null;
-			if (callback != null) {
-				callback.run();
-			}
+		}
+		finishCapture(client); // synchronous (vanilla) capture already ran, or it failed — clean up now
+	}
+
+	/** Un-ghost, reset state, and notify the requester. Runs after a synchronous (vanilla) capture, after a
+	 * failure, or once a multi-frame (shader) capture completes. */
+	private static void finishCapture(MinecraftClient client) {
+		Runnable callback = onFinished;
+		GhostController.deactivate(client);
+		phase = Phase.IDLE;
+		cameraPortal = null;
+		saveTo = null;
+		manualCapture = false;
+		onFinished = null;
+		if (callback != null) {
+			callback.run();
 		}
 	}
 
-	private static void performCapture(MinecraftClient client, PortalRecord camera, PortalRecord save,
+	/** Mark the save-record's slot captured, persist, and chime for auto captures. */
+	private static void markCaptured(MinecraftClient client, PortalStore store, PortalRecord save,
+			boolean manual) {
+		if (manual) {
+			save.manual.hasCapture = true;
+			save.manual.pinned = true; // pin it so it wins over — and isn't overwritten by — auto travel
+			save.manual.timestamp = System.currentTimeMillis();
+		} else {
+			save.auto.hasCapture = true;
+			save.auto.timestamp = System.currentTimeMillis();
+		}
+		store.save(save);
+		PortalGlimpse.LOGGER.info("Portal Glimpse: captured {} glimpse (record {})",
+				manual ? "manual" : "auto", save.id);
+		// Auto capture has no other indicator, so it chimes (the "zombie villager cured" sound). Manual
+		// capture already signals with the green glow, so it stays silent.
+		if (!manual && client.player != null) {
+			client.player.playSound(SoundEvents.ENTITY_ZOMBIE_VILLAGER_CONVERTED, 1.0F, 1.0F);
+		}
+	}
+
+	/** Build the shots and start the capture. Returns true if a multi-frame (shader) capture was started and
+	 * completion is DEFERRED (finalised from {@link #onTick} once it finishes); false if a synchronous
+	 * (vanilla) capture already ran to completion here. */
+	private static boolean startCapture(MinecraftClient client, PortalRecord camera, PortalRecord save,
 			boolean manual) throws Exception {
 		PortalStore store = PortalDetection.store();
 		ClientPlayerEntity player = client.player;
 		if (store == null || player == null) {
-			return;
+			return false;
 		}
 		Path dir = store.baseDir().resolve(save.id.toString());
 		Vec3d center = portalCenter(camera);
@@ -187,6 +254,17 @@ public final class CaptureManager {
 					prefix + "postcard_east.png"));
 		}
 
+		// Under a shaderpack: multi-frame settle capture (see CaptureRenderer) so the pack's persistent
+		// temporal buffers advance per real frame and settle onto each face — otherwise the faces bleed into
+		// one another ("shadow blocks"). Nausea is held off in onTick for the whole run; completion is
+		// finalised there. Vanilla has no temporal buffers, so it stays the instant synchronous capture.
+		if (IrisCompat.shadersActive()) {
+			player.nauseaIntensity = 0.0F;
+			player.prevNauseaIntensity = 0.0F;
+			CaptureRenderer.beginIncremental(client, dir, shots);
+			return true;
+		}
+
 		// Suppress the portal-nausea screen wobble for the shots — right after travel the effect
 		// is at full strength and would warp every capture.
 		float nausea = player.nauseaIntensity;
@@ -199,24 +277,8 @@ public final class CaptureManager {
 			player.nauseaIntensity = nausea;
 			player.prevNauseaIntensity = prevNausea;
 		}
-
-		if (manual) {
-			save.manual.hasCapture = true;
-			save.manual.pinned = true; // pin it so it wins over — and isn't overwritten by — auto travel
-			save.manual.timestamp = System.currentTimeMillis();
-		} else {
-			save.auto.hasCapture = true;
-			save.auto.timestamp = System.currentTimeMillis();
-		}
-		store.save(save);
-
-		PortalGlimpse.LOGGER.info("Portal Glimpse: captured {} glimpse (camera {} -> record {})",
-				manual ? "manual" : "auto", camera.id, save.id);
-		// Auto capture has no other indicator, so it chimes (the "zombie villager cured" sound). Manual
-		// capture already signals with the green glow, so it stays silent.
-		if (!manual && client.player != null) {
-			client.player.playSound(SoundEvents.ENTITY_ZOMBIE_VILLAGER_CONVERTED, 1.0F, 1.0F);
-		}
+		markCaptured(client, store, save, manual);
+		return false;
 	}
 
 	/** Geometric center of the portal's interior blocks — width, height and depth (§3.2). */

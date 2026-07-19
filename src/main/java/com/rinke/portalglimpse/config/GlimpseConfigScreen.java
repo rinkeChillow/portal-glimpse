@@ -8,6 +8,7 @@ import com.rinke.portalglimpse.data.PortalRecord;
 import com.rinke.portalglimpse.data.PortalStore;
 import com.rinke.portalglimpse.detect.PortalDetection;
 import com.rinke.portalglimpse.render.PanoramaTextures;
+import com.rinke.portalglimpse.render.ShaderRenderMethod;
 
 import me.shedaniel.clothconfig2.api.ConfigBuilder;
 import me.shedaniel.clothconfig2.api.ConfigCategory;
@@ -61,6 +62,29 @@ public final class GlimpseConfigScreen {
 				.setTooltip(Text.translatable("portal-glimpse.config.entityOverPanorama.tooltip"))
 				.setSaveConsumer(v -> config.entityOverPanorama = v)
 				.build());
+
+		general.addEntry(entry.startEnumSelector(
+						Text.translatable("portal-glimpse.config.shaderRenderMethod"),
+						ShaderRenderMethod.class, config.shaderRenderMethod)
+				.setDefaultValue(ShaderRenderMethod.OVERLAY)
+				.setEnumNameProvider(v -> Text.translatable(
+						"portal-glimpse.config.shaderRenderMethod." + ((ShaderRenderMethod) v).name().toLowerCase()))
+				.setTooltip(Text.translatable("portal-glimpse.config.shaderRenderMethod.tooltip"))
+				.setSaveConsumer(v -> config.shaderRenderMethod = v)
+				.build());
+
+		// RTT-only: motion-prediction strength (only relevant to the render-to-texture method). Shown only
+		// when RTT is the active method — change the method and reopen the screen to see/hide it.
+		if (config.shaderRenderMethod == ShaderRenderMethod.RTT) {
+			general.addEntry(entry.startIntSlider(
+							Text.translatable("portal-glimpse.config.rttPrediction"),
+							config.rttMotionPredictionPercent, 0, 100)
+					.setDefaultValue(100)
+					.setTextGetter(v -> Text.literal(v + "%"))
+					.setTooltip(Text.translatable("portal-glimpse.config.rttPrediction.tooltip"))
+					.setSaveConsumer(v -> config.rttMotionPredictionPercent = v)
+					.build());
+		}
 
 		general.addEntry(entry.startIntSlider(
 						Text.translatable("portal-glimpse.config.panoramaFov"),

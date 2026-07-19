@@ -10,6 +10,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.rinke.portalglimpse.PortalGlimpse;
 import com.rinke.portalglimpse.render.GlimpseSettings;
+import com.rinke.portalglimpse.render.ShaderRenderMethod;
 
 import net.fabricmc.loader.api.FabricLoader;
 
@@ -31,7 +32,9 @@ public final class GlimpseConfig {
 	// Mirrors of the runtime fields in GlimpseSettings that players are allowed to set.
 	public boolean glimpsesVisible = true;
 	public boolean entityOverPanorama = true; // show players standing in a portal, through the panorama
+	public ShaderRenderMethod shaderRenderMethod = ShaderRenderMethod.OVERLAY; // how the glimpse draws under shaders
 	public float panoramaFovDegrees = 60.0F; // 20..60 (half field-of-view)
+	public int rttMotionPredictionPercent = 100; // 0..100% RTT lag prediction (0 = off, 100 = full one-frame)
 	public int netherVeilAlpha = 51;         // 0..255 (~20%) — Nether view, seen from the Overworld
 	public int overworldVeilAlpha = 102;     // 0..255 (~40%) — Overworld view, seen from the Nether
 	public int autoCaptureCooldownMinutes = 5; // 0..60 (0 = every eligible travel)
@@ -86,7 +89,9 @@ public final class GlimpseConfig {
 	public void apply() {
 		GlimpseSettings.glimpsesVisible = glimpsesVisible;
 		GlimpseSettings.entityOverPanorama = entityOverPanorama;
+		GlimpseSettings.shaderRenderMethod = shaderRenderMethod != null ? shaderRenderMethod : ShaderRenderMethod.RTT;
 		GlimpseSettings.panoramaFovDegrees = panoramaFovDegrees;
+		GlimpseSettings.rttMotionPrediction = 1.0F + rttMotionPredictionPercent / 100.0F; // 0..100% → 1.0..2.0
 		GlimpseSettings.netherVeilAlpha = netherVeilAlpha;
 		GlimpseSettings.overworldVeilAlpha = overworldVeilAlpha;
 		GlimpseSettings.autoCaptureCooldownMinutes = autoCaptureCooldownMinutes;
@@ -97,6 +102,7 @@ public final class GlimpseConfig {
 		netherVeilAlpha = Math.max(0, Math.min(255, netherVeilAlpha));
 		overworldVeilAlpha = Math.max(0, Math.min(255, overworldVeilAlpha));
 		panoramaFovDegrees = Math.max(20.0F, Math.min(60.0F, panoramaFovDegrees));
+		rttMotionPredictionPercent = Math.max(0, Math.min(100, rttMotionPredictionPercent));
 		autoCaptureCooldownMinutes = Math.max(0, Math.min(60, autoCaptureCooldownMinutes));
 		captureChunkRadius = Math.max(0, Math.min(8, captureChunkRadius));
 	}

@@ -10,7 +10,11 @@ import java.util.UUID;
 
 import org.joml.Matrix4f;
 import org.joml.Matrix4fStack;
+import org.joml.Vector4f;
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL30;
 
+import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 
 import com.rinke.portalglimpse.data.PortalRecord;
@@ -22,6 +26,8 @@ import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gl.Framebuffer;
+import net.minecraft.client.gl.SimpleFramebuffer;
 import net.minecraft.entity.Entity;
 import net.minecraft.client.gl.GlUniform;
 import net.minecraft.client.gl.ShaderProgram;
@@ -135,6 +141,16 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	 * inside the surrounding obsidian: hidden by the frame until the push brings them forward, and not
 	 * coplanar with the frame's inner faces (which had caused z-fighting). */
 	private static final float BOX_MARGIN = 0.5F;
+	/** RTT ONLY: a box surface right up against the camera shades/distorts at grazing angles under Iris, so
+	 * in the RTT path the box is kept this much further (blocks) in front of the eye than {@link #EYE_PUSH}
+	 * — "at least a block clear". The FBO box AND the sampling quad both use it so their screen footprints
+	 * stay matched; the overlay/vanilla paths keep {@link #EYE_PUSH}. Tune up (e.g. 1.5) if it still grazes. */
+	private static final float EYE_PUSH_RTT = 1.7F;
+	/** RTT ONLY: the box grown wider than {@link #BOX_MARGIN} so that, pushed the extra distance out, it
+	 * still fills the view. Deliberately NON-integer (0.9, not 1.0): an integer margin lands the box edges
+	 * exactly on adjacent block faces (dirt top, obsidian faces) and z-fights them; 0.9 tucks the edges a
+	 * tenth of a block inside the frame so they're occluded/non-coplanar instead. */
+	private static final float BOX_MARGIN_RTT = 0.9F;
 	/** When a solid block sits in front of a portal's base (e.g. grass), the pushed box's downward margin
 	 * would clip through it. Instead lift that box's bottom to this height above the opening bottom
 	 * (~1.1 above the block's base) so it clears the block: no z-fight, no poke-through. */
@@ -160,6 +176,20 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	private static boolean lastShadersActive;
 	/** Read-only identity, passed as the "world pose" when the overlay sets the full view on the stack. */
 	private static final Matrix4f IDENTITY = new Matrix4f();
+	// RTT stash: drawables + this frame's view/projection, collected at AFTER_TRANSLUCENT. The FBO is
+	// rendered POST-composite (renderAfterShaders — where our shader binds and fb-juggling is safe), then
+	// drawn onto the portal at AFTER_ENTITIES (the phase Iris captures into its gbuffers). Portals are
+	// static, so the 1-frame-old FBO reads fine.
+	private static List<Drawable> rttDrawables;
+	private static Vec3d rttCam;
+	private static Matrix4f rttView;
+	private static Matrix4f rttProjection;
+	private static boolean rttFboValid;
+	// Previous frame's camera view + position, for motion prediction: the FBO baked this frame isn't sampled
+	// until NEXT frame's entity pass, so it's rendered from the linearly-extrapolated next-frame camera to
+	// cancel the 1-frame lag on smooth motion (the quad then samples with the real current camera).
+	private static Matrix4f rttViewPrev;
+	private static Vec3d rttCamPrev;
 
 	@Override
 	public String name() {
@@ -168,7 +198,8 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 
 	@Override
 	public void renderWorld(WorldRenderContext context) {
-		deferredPanos = null; // reset the shader-overlay stash each frame (set below only under shaders)
+		deferredPanos = null; // reset the shader stashes each frame (set below only under shaders)
+		rttDrawables = null;
 		PortalStore store = PortalDetection.store();
 		ClientWorld world = context.world();
 		if (store == null || world == null) {
@@ -286,6 +317,15 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 					lastPushedDist.remove(record.id);
 				}
 			}
+			// RTT-only push amount: the box is kept a big EYE_PUSH_RTT (1.7) clear of the eye, so the binary
+			// pushAmount above would SNAP the panorama out to ~2 blocks the instant you cross the boundary
+			// (invisible at the overlay/vanilla 0.25 push, jarring at 1.7). Instead EASE it with eye proximity
+			// to the surface over EYE_PUSH_RTT blocks, so the box has slid out to full clearance by the time you
+			// enter. playerInside pins it to 1. Only the RTT paths read this; overlay/vanilla use pushAmount.
+			double rttSurfaceN = record.axis == Direction.Axis.X ? bounds.minZ() + 0.5 : bounds.minX() + 0.5;
+			double rttEyeN = record.axis == Direction.Axis.X ? cameraPos.z : cameraPos.x;
+			float rttPushAmount = playerInside ? 1.0F
+					: Math.max(0.0F, Math.min(1.0F, 1.0F - (float) Math.abs(rttEyeN - rttSurfaceN) / EYE_PUSH_RTT));
 			// Encasement: as the teleport swirl (nausea) builds while you stand in the portal, the destination
 			// panorama ALSO fades in on the OTHER side, wrapping around you until it fully encases you at the
 			// moment of teleport. Fade-IN tracks the swirl (nausea rises slowly); stepping out collapses the
@@ -389,7 +429,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				}
 				drawables.add(new Drawable(record, texture, present, bounds, glimpseAlpha, veilAlpha,
 						viewerOnFaceA, arrivalFade * distanceFade * departFade * relightFade,
-						pushAmount, pushSign, encasement));
+						pushAmount, rttPushAmount, pushSign, encasement));
 			}
 		}
 
@@ -412,19 +452,29 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		// a post-composite overlay instead. The block-hiding above already ran, so the vanilla swirl is
 		// gone. (The postcard crossfade is skipped under shaders — the panorama is the glimpse there.)
 		if (shaders) {
-			deferredPanos = drawables;
-			deferredCam = cameraPos;
-			// Capture the exact transform this frame uses so the overlay lands identically: the base view
-			// (camera rotation, on the model-view stack now) folded with the world pose, and the projection.
-			deferredView = new Matrix4f(RenderSystem.getModelViewStack())
-					.mul(context.matrixStack().peek().getPositionMatrix());
-			deferredProjection = new Matrix4f(context.projectionMatrix());
+			if (GlimpseSettings.shaderRenderMethod == ShaderRenderMethod.RTT) {
+				// RTT: the FBO is rendered post-composite (renderAfterShaders) and drawn onto the portal
+				// at AFTER_ENTITIES (renderInEntityPass, the phase Iris captures). Stash this frame's data.
+				rttDrawables = drawables;
+				rttCam = cameraPos;
+				rttView = new Matrix4f(RenderSystem.getModelViewStack())
+						.mul(context.matrixStack().peek().getPositionMatrix());
+				rttProjection = new Matrix4f(context.projectionMatrix());
+			} else {
+				// OVERLAY: stash and draw post-composite (see renderAfterShaders). Capture this frame's exact
+				// transform so the overlay lands identically: base view (on the stack now) × world pose.
+				deferredPanos = drawables;
+				deferredCam = cameraPos;
+				deferredView = new Matrix4f(RenderSystem.getModelViewStack())
+						.mul(context.matrixStack().peek().getPositionMatrix());
+				deferredProjection = new Matrix4f(context.projectionMatrix());
+			}
 			return;
 		}
 
 		// Pass 0: the parallax panorama, drawn FIRST and sitting just BEHIND the postcard plane, so
 		// the postcard blends over it and fades to reveal it up close (the crossfade, §4.2).
-		renderPanoramas(context.matrixStack().peek().getPositionMatrix(), store, cameraPos, drawables);
+		renderPanoramas(context.matrixStack().peek().getPositionMatrix(), store, cameraPos, drawables, false);
 
 		MatrixStack matrices = context.matrixStack();
 		matrices.push();
@@ -515,6 +565,16 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	 */
 	@Override
 	public void renderAfterShaders() {
+		// RTT method: render the panorama INTO the offscreen FBO here (post-composite), where our custom
+		// shader binds correctly and framebuffer juggling is safe (Iris's pipeline is done for the frame).
+		// renderInEntityPass then draws that FBO onto the portal so Iris shades it. (Doing the FBO render in
+		// the entity pass produced a void — Iris intercepts our shader there and the raw fb rebind corrupts
+		// its target.) rttDrawables is only set (this frame) when the RTT method is active.
+		if (rttDrawables != null) {
+			renderRttToFbo();
+			return;
+		}
+
 		List<Drawable> panos = deferredPanos;
 		Vec3d cam = deferredCam;
 		Matrix4f view = deferredView;
@@ -540,7 +600,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		modelView.mul(view);
 		RenderSystem.applyModelViewMatrix();
 
-		renderPanoramas(IDENTITY, store, cam, panos); // view already on the stack; identity world-pose
+		renderPanoramas(IDENTITY, store, cam, panos, false); // view already on the stack; identity world-pose
 		drawShaderVeil(client, cam, panos);           // our custom swirl, over the panorama
 
 		modelView.popMatrix();
@@ -567,6 +627,289 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			emitVeil(entry, immediate.getBuffer(veilLayer), drawable, portalSprite);
 		}
 		immediate.draw();
+	}
+
+	// --- RTT path (shader-lit): the panorama is rendered to an offscreen texture POST-composite
+	// (renderRttToFbo, where our custom shader binds), then drawn (with the veil) as normal geometry in the
+	// ENTITY phase so Iris captures it into its gbuffers and lights it. The FBO is one frame old (rendered
+	// last frame's post-composite) but portals are static, so it reads fine. ---
+	private static Framebuffer rttFbo;
+	private static boolean rttTexRegistered;
+	private static final Identifier RTT_TEX_ID = Identifier.of("portal-glimpse", "rtt_panorama");
+	// TEMP DIAGNOSTIC #1 (block-atlas test): CONFIRMED — the atlas rendered on the portal, so geometry, UVs,
+	// entity-pass draw, and Iris gbuffer capture all work; the FBO comes back empty. Flag now off.
+	private static final boolean DEBUG_RTT_KNOWN_TEXTURE = false;
+	// TEMP DIAGNOSTIC #2 (magenta-clear test): sample the REAL FBO, but clear it to OPAQUE MAGENTA before the
+	// panorama render, to split why the FBO is empty:
+	//   - portal shows MAGENTA (maybe with the panorama over it) => the FBO IS sampleable; if there's no
+	//        panorama on the magenta, renderPanoramas isn't drawing into the offscreen buffer.
+	//   - portal shows NOTHING (not even magenta)               => this specific FBO texture isn't sampleable
+	//        (color-attachment format / filter / mipmap-completeness), unlike the atlas.
+	private static final boolean DEBUG_RTT_SOLID_CLEAR = false;
+
+	/** Post-composite: render the panorama into our offscreen FBO with our own shader (which binds cleanly
+	 * only now that Iris's pipeline is done). renderInEntityPass draws that FBO onto the portal next. */
+	private void renderRttToFbo() {
+		List<Drawable> drawables = rttDrawables;
+		Matrix4f projection = rttProjection;
+		rttFboValid = false;
+		if (drawables == null || drawables.isEmpty() || rttView == null || projection == null) {
+			return;
+		}
+		// Linearly extrapolate the camera one frame forward (new Matrix4f(prev).lerp(cur, 2) = 2·cur − prev)
+		// so the FBO — sampled next frame — is rendered from where the camera will be, cancelling the 1-frame
+		// lag under smooth motion. The projection carries the walk-bob, so it is NOT extrapolated (that would
+		// amplify bob jitter). First frame (no history) falls back to the current view/pos.
+		float predict = GlimpseSettings.rttMotionPrediction; // 1.0 = none, 2.0 = full one-frame
+		Matrix4f view = rttViewPrev != null ? new Matrix4f(rttViewPrev).lerp(rttView, predict) : rttView;
+		Vec3d cam = rttCamPrev != null
+				? rttCamPrev.add(rttCam.subtract(rttCamPrev).multiply(predict)) : rttCam;
+		rttViewPrev = new Matrix4f(rttView);
+		rttCamPrev = rttCam;
+		PortalStore store = PortalDetection.store();
+		if (store == null) {
+			return;
+		}
+		MinecraftClient client = MinecraftClient.getInstance();
+		Framebuffer main = client.getFramebuffer();
+		int w = main.textureWidth;
+		int h = main.textureHeight;
+		if (rttFbo == null) {
+			rttFbo = new SimpleFramebuffer(w, h, true, MinecraftClient.IS_SYSTEM_MAC);
+		} else if (rttFbo.textureWidth != w || rttFbo.textureHeight != h) {
+			rttFbo.resize(w, h, MinecraftClient.IS_SYSTEM_MAC);
+		}
+		if (!rttTexRegistered) {
+			client.getTextureManager().registerTexture(RTT_TEX_ID, new FboWrapTexture(rttFbo));
+			rttTexRegistered = true;
+		}
+
+		if (DEBUG_RTT_SOLID_CLEAR) {
+			rttFbo.setClearColor(1.0F, 0.0F, 1.0F, 1.0F); // opaque magenta (diagnostic — see DEBUG_RTT_SOLID_CLEAR)
+		} else {
+			rttFbo.setClearColor(0.0F, 0.0F, 0.0F, 0.0F);
+		}
+		rttFbo.clear(MinecraftClient.IS_SYSTEM_MAC);
+		rttFbo.beginWrite(true);
+		RenderSystem.backupProjectionMatrix();
+		RenderSystem.setProjectionMatrix(projection, RenderSystem.getVertexSorting());
+		Matrix4fStack modelView = RenderSystem.getModelViewStack();
+		modelView.pushMatrix();
+		modelView.identity();
+		modelView.mul(view);
+		RenderSystem.applyModelViewMatrix();
+		// The offscreen buffer has no scene geometry to occlude against, and its cleared depth value need not
+		// match the pipeline's depth convention (Iris may use reversed-Z) — so force the depth test to ALWAYS
+		// pass. Otherwise every panorama fragment is rejected against the cleared depth and the FBO stays empty
+		// (the glClear still lands, which is why the buffer read back as a solid clear colour). renderPanoramas
+		// enables the depth test internally but never sets the func, so this sticks through the draw.
+		RenderSystem.depthFunc(GL11.GL_ALWAYS);
+		renderPanoramas(IDENTITY, store, cam, drawables, true); // RTT: dissolve the fade (opaque gbuffer)
+		RenderSystem.depthFunc(GL11.GL_LEQUAL);
+		modelView.popMatrix();
+		RenderSystem.applyModelViewMatrix();
+		RenderSystem.restoreProjectionMatrix();
+		main.beginWrite(false); // back to the main framebuffer
+		if (GlimpseSettings.debugRttBlit) {
+			// DEBUG (Numpad 3): paint the whole offscreen buffer over the screen so its raw contents are
+			// visible directly — independent of the portal quad's sampling. All-magenta => the panorama
+			// render produced nothing; a sphere anywhere => it rendered but is misaligned with the quad UVs.
+			rttFbo.draw(main.textureWidth, main.textureHeight);
+		}
+		rttFboValid = true;
+	}
+
+	@Override
+	public void renderInEntityPass(WorldRenderContext context) {
+		if (!IrisCompat.shadersActive() || GlimpseSettings.shaderRenderMethod != ShaderRenderMethod.RTT
+				|| !rttFboValid) {
+			return;
+		}
+		List<Drawable> drawables = rttDrawables;
+		// Sample with the REAL current-frame camera (not the stashed frame-N one) — the FBO was rendered from
+		// the predicted current-frame camera (see renderRttToFbo), so this is what the panorama lines up with.
+		Vec3d cameraPos = context.camera().getPos();
+		VertexConsumerProvider consumers = context.consumers();
+		if (drawables == null || drawables.isEmpty() || consumers == null) {
+			return;
+		}
+		// Draw the FBO-textured portal quad (screen-space UVs) via a vanilla RenderType, so Iris patches it
+		// into its gbuffers and shades it. No FBO render / framebuffer juggling here — that happens
+		// post-composite (renderRttToFbo); doing it here corrupted Iris's target and voided the draw.
+		// (Veil intentionally omitted for now — testing the panorama quad on its own under shaders.)
+		//
+		// The FBO is a SCREEN-SPACE image, so to lock the panorama to the portal each fragment must sample the
+		// FBO at its OWN current on-screen position — i.e. the UVs use THIS frame's transform (the one that
+		// actually rasterizes the quad), computed before the camera-relative translate below so it matches the
+		// geometry path exactly. Using the FBO's stashed matrices instead made the whole view slide/tilt with
+		// head motion (the sampled position diverged from the quad's real screen position). Only the 1-frame
+		// FBO content lag remains, which is imperceptible when not whipping the camera.
+		Matrix4f mvp = new Matrix4f(context.projectionMatrix())
+				.mul(new Matrix4f(RenderSystem.getModelViewStack())
+						.mul(context.matrixStack().peek().getPositionMatrix()));
+		MatrixStack matrices = context.matrixStack();
+		matrices.push();
+		matrices.translate(-cameraPos.x, -cameraPos.y, -cameraPos.z);
+		MatrixStack.Entry entry = matrices.peek();
+
+		Identifier rttTex = DEBUG_RTT_KNOWN_TEXTURE
+				? Identifier.of("minecraft", "textures/atlas/blocks.png") // known-resident, opaque swatches
+				: RTT_TEX_ID;
+		VertexConsumer glimpse = consumers.getBuffer(RenderLayer.getItemEntityTranslucentCull(rttTex));
+		for (Drawable drawable : drawables) {
+			emitRttQuad(entry, glimpse, drawable, cameraPos, mvp);
+		}
+		if (consumers instanceof VertexConsumerProvider.Immediate immediate) {
+			immediate.draw();
+		}
+		matrices.pop();
+	}
+
+	/** Grid subdivisions per axis for the RTT quad (see {@link #emitRttQuad}). */
+	private static final int RTT_TESS = 24;
+
+	/**
+	 * Emits the portal-opening plane as an {@link #RTT_TESS}×{@code RTT_TESS} grid of small quads, each corner
+	 * carrying its own on-screen position as the UV, so the quad samples the offscreen panorama render 1:1.
+	 *
+	 * <p>Why a grid and not one quad: screen-space UV = clip.xy/clip.w is a <em>projective</em> (non-linear)
+	 * function of world position, but a RenderLayer interpolates UVs per triangle using the quad's own W. Across
+	 * a big perspective quad the two triangles disagree along the diagonal (a visible seam) and the image warps.
+	 * Subdividing keeps W near-constant per cell, so the affine interpolation is ~exact — the standard fix when
+	 * the fragment shader can't be touched (here it's Iris's, so we can't). The blit looks perfect for the same
+	 * reason a full-screen quad has constant W.
+	 */
+	private static void emitRttQuad(MatrixStack.Entry entry, VertexConsumer vc, Drawable drawable,
+			Vec3d cam, Matrix4f mvp) {
+		Bounds b = drawable.bounds();
+		boolean axisX = drawable.record().axis == Direction.Axis.X;
+		boolean faceA = drawable.viewerOnFaceA();
+		// While the player stands in the portal, emit the full pushed BOX (back face + 4 walls). Run the SAME
+		// shared box logic the FBO uses (emitPanoramaBox — masking + block-in-front lift included) through a
+		// sink that tessellates each quad with screen-space UVs, converting the box's camera-relative corners
+		// back to world for emitRttVertex. Identical geometry to the FBO ⇒ exact 1:1 sampling, no leaks.
+		if (drawable.rttPushAmount() > 0.0F) {
+			ClientWorld world = MinecraftClient.getInstance().world;
+			QuadSink sink = (ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz) -> emitRttTessQuad(entry, vc, cam, mvp,
+					new float[] {ax + (float) cam.x, ay + (float) cam.y, az + (float) cam.z},
+					new float[] {bx + (float) cam.x, by + (float) cam.y, bz + (float) cam.z},
+					new float[] {cx + (float) cam.x, cy + (float) cam.y, cz + (float) cam.z},
+					new float[] {dx + (float) cam.x, dy + (float) cam.y, dz + (float) cam.z});
+			emitPanoramaBox(sink, b, axisX, faceA, cam, drawable.rttPushAmount(), drawable.pushSign(), world,
+					EYE_PUSH_RTT, BOX_MARGIN_RTT);
+			return;
+		}
+		// Not pushed: the flat opening plane, tessellated.
+		float planeFrac = faceA ? PLANE_LOW : PLANE_HIGH;
+		float plane = axisX ? (b.minZ() + planeFrac) : (b.minX() + planeFrac);
+		float hMin = axisX ? b.minX() : b.minZ();
+		float hMax = axisX ? (b.maxX() + 1) : (b.maxZ() + 1);
+		float yMin = b.minY();
+		float yMax = b.maxY() + 1;
+		int n = RTT_TESS;
+		for (int gy = 0; gy < n; gy++) {
+			float y0 = yMin + (yMax - yMin) * gy / n;
+			float y1 = yMin + (yMax - yMin) * (gy + 1) / n;
+			for (int gx = 0; gx < n; gx++) {
+				float h0 = hMin + (hMax - hMin) * gx / n;
+				float h1 = hMin + (hMax - hMin) * (gx + 1) / n;
+				// Cell corners mapped to world coords for this axis, emitted in both windings so the culling
+				// layer keeps whichever faces the camera (winding doesn't affect the screen-space UV).
+				emitRttCell(entry, vc, cam, mvp, axisX, plane, h0, h1, y0, y1);
+			}
+		}
+	}
+
+	/** Tessellate an arbitrary quad (corners p00→p10 = u, p00→p01 = v) into a grid of screen-space-UV cells
+	 * (both windings). Bilinear-interpolates the corners; keeps W near-constant per cell so the screen-space
+	 * UVs interpolate ~correctly (see {@link #emitRttQuad}). Subdivision count adapts to the quad's world
+	 * size (≈2 cells/block, capped at {@link #RTT_TESS}) so small masked wall-cells don't explode. */
+	private static void emitRttTessQuad(MatrixStack.Entry entry, VertexConsumer vc, Vec3d cam, Matrix4f mvp,
+			float[] p00, float[] p10, float[] p11, float[] p01) {
+		float uLen = dist(p00, p10), vLen = dist(p00, p01);
+		int nu = Math.max(1, Math.min(RTT_TESS, Math.round(uLen * 2.0F)));
+		int nv = Math.max(1, Math.min(RTT_TESS, Math.round(vLen * 2.0F)));
+		emitRttTessGrid(entry, vc, cam, mvp, p00, p10, p11, p01, nu, nv);
+	}
+
+	private static float dist(float[] a, float[] b) {
+		float dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+		return (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+	}
+
+	private static void emitRttTessGrid(MatrixStack.Entry entry, VertexConsumer vc, Vec3d cam, Matrix4f mvp,
+			float[] p00, float[] p10, float[] p11, float[] p01, int nu, int nv) {
+		for (int gy = 0; gy < nv; gy++) {
+			float va = (float) gy / nv, vb = (float) (gy + 1) / nv;
+			for (int gx = 0; gx < nu; gx++) {
+				float ua = (float) gx / nu, ub = (float) (gx + 1) / nu;
+				float[] c00 = bilerp(p00, p10, p11, p01, ua, va);
+				float[] c10 = bilerp(p00, p10, p11, p01, ub, va);
+				float[] c11 = bilerp(p00, p10, p11, p01, ub, vb);
+				float[] c01 = bilerp(p00, p10, p11, p01, ua, vb);
+				for (int pass = 0; pass < 2; pass++) {
+					float[][] order = pass == 0
+							? new float[][] {c00, c10, c11, c01}
+							: new float[][] {c01, c11, c10, c00};
+					for (float[] c : order) {
+						emitRttVertex(entry, vc, cam, mvp, c[0], c[1], c[2]);
+					}
+				}
+			}
+		}
+	}
+
+	/** Bilinear interpolation of a quad's four corners at (u, v). */
+	private static float[] bilerp(float[] p00, float[] p10, float[] p11, float[] p01, float u, float v) {
+		float[] r = new float[3];
+		for (int i = 0; i < 3; i++) {
+			float a = p00[i] + (p10[i] - p00[i]) * u;
+			float c = p01[i] + (p11[i] - p01[i]) * u;
+			r[i] = a + (c - a) * v;
+		}
+		return r;
+	}
+
+	/** One tessellation cell of the RTT quad, emitted in both windings. */
+	private static void emitRttCell(MatrixStack.Entry entry, VertexConsumer vc, Vec3d cam, Matrix4f mvp,
+			boolean axisX, float plane, float h0, float h1, float y0, float y1) {
+		float[][] c = new float[4][3];
+		rttCorner(c, 0, axisX, plane, h0, y1);
+		rttCorner(c, 1, axisX, plane, h0, y0);
+		rttCorner(c, 2, axisX, plane, h1, y0);
+		rttCorner(c, 3, axisX, plane, h1, y1);
+		for (int pass = 0; pass < 2; pass++) {
+			for (int i = 0; i < 4; i++) {
+				float[] w = c[pass == 0 ? i : 3 - i];
+				emitRttVertex(entry, vc, cam, mvp, w[0], w[1], w[2]);
+			}
+		}
+	}
+
+	private static void rttCorner(float[][] c, int i, boolean axisX, float plane, float h, float y) {
+		if (axisX) {
+			c[i][0] = h;
+			c[i][1] = y;
+			c[i][2] = plane;
+		} else {
+			c[i][0] = plane;
+			c[i][1] = y;
+			c[i][2] = h;
+		}
+	}
+
+	/** Emits one RTT vertex whose UV is its own on-screen (NDC→[0,1]) position, V-flipped for the bottom-up FBO. */
+	private static void emitRttVertex(MatrixStack.Entry entry, VertexConsumer vc, Vec3d cam, Matrix4f mvp,
+			float wx, float wy, float wz) {
+		Vector4f clip = new Vector4f((float) (wx - cam.x), (float) (wy - cam.y), (float) (wz - cam.z), 1.0F);
+		mvp.transform(clip);
+		float u = 0.5F;
+		float v = 0.5F;
+		if (clip.w > 1.0e-4F) {
+			u = clip.x / clip.w * 0.5F + 0.5F;
+			v = clip.y / clip.w * 0.5F + 0.5F; // framebuffer texture is bottom-up: NDC top (+1) → v=1 (fb top)
+		}
+		vertex(entry, vc, wx, wy, wz, u, v, 255, 255, 255, 255);
 	}
 
 	/**
@@ -629,7 +972,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	 * so the view shifts with real perspective as the player moves.
 	 */
 	private static void renderPanoramas(Matrix4f worldPose, PortalStore store, Vec3d cameraPos,
-			List<Drawable> drawables) {
+			List<Drawable> drawables, boolean ditherFade) {
 		ShaderProgram shader = PortalShaders.panorama();
 		if (shader == null) {
 			return;
@@ -672,6 +1015,10 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		GlUniform alpha = shader.getUniform("GlimpseAlpha");
 		GlUniform center = shader.getUniform("PortalCenter");
 		GlUniform radius = shader.getUniform("SphereRadius");
+		GlUniform dither = shader.getUniform("DitherFade");
+		if (dither != null) {
+			dither.set(ditherFade ? 1.0F : 0.0F); // RTT dissolves the fade; blended paths use smooth alpha
+		}
 
 		for (PanoDraw pano : panos) {
 			// A portal a player is standing in skips depth-write, so the player (re-rendered afterwards at
@@ -721,12 +1068,19 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			boolean faceA = pano.drawable().viewerOnFaceA();
 			BufferBuilder buffer = Tessellator.getInstance()
 					.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION);
-			if (pano.drawable().pushAmount() > 0.0F) {
-				emitPanoramaBox(buffer, b, axisX, faceA, cameraPos, pano.drawable().pushAmount(),
-						pano.drawable().pushSign(), client.world);
+			// RTT keeps the box a block further out (and wider) so it doesn't graze/distort against the eye
+			// under Iris; the sampling quad (emitRttBox) uses the same values so the footprints match.
+			float eyePush = ditherFade ? EYE_PUSH_RTT : EYE_PUSH;
+			float boxMargin = ditherFade ? BOX_MARGIN_RTT : BOX_MARGIN;
+			// RTT uses the proximity-EASED push so the box slides out smoothly; overlay/vanilla use the binary
+			// one. Both the FBO box (here) and the sampling quad (emitRttQuad) must read the same value.
+			float push = ditherFade ? pano.drawable().rttPushAmount() : pano.drawable().pushAmount();
+			if (push > 0.0F) {
+				emitPanoramaBox(bufferSink(buffer), b, axisX, faceA, cameraPos, push,
+						pano.drawable().pushSign(), client.world, eyePush, boxMargin);
 			} else {
 				for (BlockPos pos : pano.drawable().blocks()) {
-					emitPanoramaQuad(buffer, pos, axisX, faceA, cameraPos, pano.drawable().pushAmount(),
+					emitPanoramaQuad(buffer, pos, axisX, faceA, cameraPos, push,
 							pano.drawable().pushSign());
 				}
 			}
@@ -742,8 +1096,8 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				alpha.set(encasement);
 				BufferBuilder encBuffer = Tessellator.getInstance()
 						.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION);
-				emitPanoramaBox(encBuffer, b, axisX, !faceA, cameraPos, 1.0F, -pano.drawable().pushSign(),
-						client.world);
+				emitPanoramaBox(bufferSink(encBuffer), b, axisX, !faceA, cameraPos, 1.0F, -pano.drawable().pushSign(),
+						client.world, eyePush, boxMargin);
 				BuiltBuffer encBuilt = encBuffer.endNullable();
 				if (encBuilt != null) {
 					BufferRenderer.drawWithGlobalProgram(encBuilt);
@@ -798,6 +1152,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	 * already disabled, so winding is irrelevant.
 	 */
 	private static void emitDepthCage(BufferBuilder buffer, Bounds b, boolean axisX, boolean faceA, Vec3d cam) {
+		QuadSink quad = bufferSink(buffer);
 		float m = BOX_MARGIN;
 		float depth = Math.max(DEPTH_CAGE_MIN, Math.max(b.width(), b.height()));
 		float dest = faceA ? 1.0F : -1.0F; // destination side = away from the viewer
@@ -808,21 +1163,21 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			float back = front + depth * dest;
 			float x0 = (float) (b.minX() - m - cam.x);
 			float x1 = (float) (b.maxX() + 1 + m - cam.x);
-			quad(buffer, x0, y1, back, x0, y0, back, x1, y0, back, x1, y1, back); // back
-			quad(buffer, x0, y1, front, x1, y1, front, x1, y1, back, x0, y1, back); // top
-			quad(buffer, x0, y0, front, x1, y0, front, x1, y0, back, x0, y0, back); // bottom
-			quad(buffer, x0, y1, front, x0, y0, front, x0, y0, back, x0, y1, back); // left
-			quad(buffer, x1, y1, front, x1, y0, front, x1, y0, back, x1, y1, back); // right
+			quad.quad(x0, y1, back, x0, y0, back, x1, y0, back, x1, y1, back); // back
+			quad.quad(x0, y1, front, x1, y1, front, x1, y1, back, x0, y1, back); // top
+			quad.quad(x0, y0, front, x1, y0, front, x1, y0, back, x0, y0, back); // bottom
+			quad.quad(x0, y1, front, x0, y0, front, x0, y0, back, x0, y1, back); // left
+			quad.quad(x1, y1, front, x1, y0, front, x1, y0, back, x1, y1, back); // right
 		} else {
 			float front = (float) (b.minX() + 0.5 - cam.x);
 			float back = front + depth * dest;
 			float z0 = (float) (b.minZ() - m - cam.z);
 			float z1 = (float) (b.maxZ() + 1 + m - cam.z);
-			quad(buffer, back, y1, z0, back, y0, z0, back, y0, z1, back, y1, z1); // back
-			quad(buffer, front, y1, z0, front, y1, z1, back, y1, z1, back, y1, z0); // top
-			quad(buffer, front, y0, z0, front, y0, z1, back, y0, z1, back, y0, z0); // bottom
-			quad(buffer, front, y1, z0, front, y0, z0, back, y0, z0, back, y1, z0); // near-Z
-			quad(buffer, front, y1, z1, front, y0, z1, back, y0, z1, back, y1, z1); // far-Z
+			quad.quad(back, y1, z0, back, y0, z0, back, y0, z1, back, y1, z1); // back
+			quad.quad(front, y1, z0, front, y1, z1, back, y1, z1, back, y1, z0); // top
+			quad.quad(front, y0, z0, front, y0, z1, back, y0, z1, back, y0, z0); // bottom
+			quad.quad(front, y1, z0, front, y0, z0, back, y0, z0, back, y1, z0); // near-Z
+			quad.quad(front, y1, z1, front, y0, z1, back, y0, z1, back, y1, z1); // far-Z
 		}
 	}
 
@@ -890,13 +1245,12 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	 * stay covered. POSITION-only; the shader samples the same sphere on every face.
 	 */
 
-	private static void emitPanoramaBox(BufferBuilder buffer, Bounds b, boolean axisX, boolean faceA,
-			Vec3d cam, float pushAmount, float pushSign, ClientWorld world) {
-		float m = BOX_MARGIN;
+	private static void emitPanoramaBox(QuadSink sink, Bounds b, boolean axisX, boolean faceA,
+			Vec3d cam, float pushAmount, float pushSign, ClientWorld world, float eyePush, float m) {
 		float back = faceA ? PANORAMA_OFFSET : -PANORAMA_OFFSET;
 		if (axisX) {
 			float surface = (float) ((faceA ? b.minZ() + PLANE_LOW : b.minZ() + PLANE_HIGH) + back - cam.z);
-			float ratchet = Math.max(surface * pushSign, EYE_PUSH) * pushSign;
+			float ratchet = Math.max(surface * pushSign, eyePush) * pushSign;
 			float pushed = surface + (ratchet - surface) * pushAmount;
 			int frontZ = pushSign > 0.0F ? b.maxZ() + 1 : b.minZ() - 1; // one block out on the destination side
 			boolean oBottom = sideObstructed(world, 1, b.minY() - 1, 2, frontZ, 0, b.minX(), b.maxX());
@@ -907,17 +1261,17 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			float y1 = (float) ((oTop ? b.maxY() + 1 - BOTTOM_LIFT : b.maxY() + 1 + m) - cam.y);
 			float x0 = (float) ((oLeft ? b.minX() + BOTTOM_LIFT : b.minX() - m) - cam.x);
 			float x1 = (float) ((oRight ? b.maxX() + 1 - BOTTOM_LIFT : b.maxX() + 1 + m) - cam.x);
-			quad(buffer, x0, y0, pushed, x1, y0, pushed, x1, y1, pushed, x0, y1, pushed); // back face
+			sink.quad(x0, y0, pushed, x1, y0, pushed, x1, y1, pushed, x0, y1, pushed); // back face
 			if (Math.abs(pushed - surface) >= 1.0e-3F) { // walls only once the push gives real depth
 				double zLo = Math.min(surface, pushed) + cam.z, zHi = Math.max(surface, pushed) + cam.z;
-				emitWall(buffer, world, cam, oLeft, 0, x0, b.minX() - 1, 1, y0 + cam.y, y1 + cam.y, 2, zLo, zHi);
-				emitWall(buffer, world, cam, oRight, 0, x1, b.maxX() + 1, 1, y0 + cam.y, y1 + cam.y, 2, zLo, zHi);
-				emitWall(buffer, world, cam, oBottom, 1, y0, b.minY() - 1, 0, x0 + cam.x, x1 + cam.x, 2, zLo, zHi);
-				emitWall(buffer, world, cam, oTop, 1, y1, b.maxY() + 1, 0, x0 + cam.x, x1 + cam.x, 2, zLo, zHi);
+				emitWall(sink, world, cam, oLeft, 0, x0, b.minX() - 1, 1, y0 + cam.y, y1 + cam.y, 2, zLo, zHi);
+				emitWall(sink, world, cam, oRight, 0, x1, b.maxX() + 1, 1, y0 + cam.y, y1 + cam.y, 2, zLo, zHi);
+				emitWall(sink, world, cam, oBottom, 1, y0, b.minY() - 1, 0, x0 + cam.x, x1 + cam.x, 2, zLo, zHi);
+				emitWall(sink, world, cam, oTop, 1, y1, b.maxY() + 1, 0, x0 + cam.x, x1 + cam.x, 2, zLo, zHi);
 			}
 		} else {
 			float surface = (float) ((faceA ? b.minX() + PLANE_LOW : b.minX() + PLANE_HIGH) + back - cam.x);
-			float ratchet = Math.max(surface * pushSign, EYE_PUSH) * pushSign;
+			float ratchet = Math.max(surface * pushSign, eyePush) * pushSign;
 			float pushed = surface + (ratchet - surface) * pushAmount;
 			int frontX = pushSign > 0.0F ? b.maxX() + 1 : b.minX() - 1;
 			boolean oBottom = sideObstructed(world, 1, b.minY() - 1, 0, frontX, 2, b.minZ(), b.maxZ());
@@ -928,39 +1282,49 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			float y1 = (float) ((oTop ? b.maxY() + 1 - BOTTOM_LIFT : b.maxY() + 1 + m) - cam.y);
 			float z0 = (float) ((oLeft ? b.minZ() + BOTTOM_LIFT : b.minZ() - m) - cam.z);
 			float z1 = (float) ((oRight ? b.maxZ() + 1 - BOTTOM_LIFT : b.maxZ() + 1 + m) - cam.z);
-			quad(buffer, pushed, y0, z0, pushed, y0, z1, pushed, y1, z1, pushed, y1, z0); // back face
+			sink.quad(pushed, y0, z0, pushed, y0, z1, pushed, y1, z1, pushed, y1, z0); // back face
 			if (Math.abs(pushed - surface) >= 1.0e-3F) {
 				double xLo = Math.min(surface, pushed) + cam.x, xHi = Math.max(surface, pushed) + cam.x;
-				emitWall(buffer, world, cam, oLeft, 2, z0, b.minZ() - 1, 1, y0 + cam.y, y1 + cam.y, 0, xLo, xHi);
-				emitWall(buffer, world, cam, oRight, 2, z1, b.maxZ() + 1, 1, y0 + cam.y, y1 + cam.y, 0, xLo, xHi);
-				emitWall(buffer, world, cam, oBottom, 1, y0, b.minY() - 1, 2, z0 + cam.z, z1 + cam.z, 0, xLo, xHi);
-				emitWall(buffer, world, cam, oTop, 1, y1, b.maxY() + 1, 2, z0 + cam.z, z1 + cam.z, 0, xLo, xHi);
+				emitWall(sink, world, cam, oLeft, 2, z0, b.minZ() - 1, 1, y0 + cam.y, y1 + cam.y, 0, xLo, xHi);
+				emitWall(sink, world, cam, oRight, 2, z1, b.maxZ() + 1, 1, y0 + cam.y, y1 + cam.y, 0, xLo, xHi);
+				emitWall(sink, world, cam, oBottom, 1, y0, b.minY() - 1, 2, z0 + cam.z, z1 + cam.z, 0, xLo, xHi);
+				emitWall(sink, world, cam, oTop, 1, y1, b.maxY() + 1, 2, z0 + cam.z, z1 + cam.z, 0, xLo, xHi);
 			}
 		}
 	}
 
-	/** Emit one POSITION-only quad (4 corners a,b,c,d) into the panorama buffer. */
-	private static void quad(BufferBuilder buffer,
-			float ax, float ay, float az, float bx, float by, float bz,
-			float cornerCx, float cornerCy, float cornerCz, float dx, float dy, float dz) {
-		buffer.vertex(ax, ay, az);
-		buffer.vertex(bx, by, bz);
-		buffer.vertex(cornerCx, cornerCy, cornerCz);
-		buffer.vertex(dx, dy, dz);
+	/** Sink for one panorama-box quad (4 corners a,b,c,d, CAMERA-RELATIVE). The FBO path writes POSITION
+	 * verts; the RTT path tessellates each quad with screen-space UVs. Sharing this lets the box + wall +
+	 * mask + block-in-front lift logic live in ONE place so the RTT box matches the FBO box exactly (1:1
+	 * screen-space sampling, no overshoot to reveal-behind and no reliance on it). */
+	@FunctionalInterface
+	private interface QuadSink {
+		void quad(float ax, float ay, float az, float bx, float by, float bz,
+				float cx, float cy, float cz, float dx, float dy, float dz);
+	}
+
+	/** A {@link QuadSink} that writes POSITION-only verts straight into a panorama {@link BufferBuilder}. */
+	private static QuadSink bufferSink(BufferBuilder buffer) {
+		return (ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz) -> {
+			buffer.vertex(ax, ay, az);
+			buffer.vertex(bx, by, bz);
+			buffer.vertex(cx, cy, cz);
+			buffer.vertex(dx, dy, dz);
+		};
 	}
 
 	/** Emit one box wall: a rectangle in the plane perpendicular to constAxis at wallCamRel, spanning
 	 * uAxis[uMinW,uMaxW] x vAxis[vMinW,vMaxW] (camera-relative from those world ranges). If masked, emit
 	 * per block-cell and SKIP cells whose frame block (constAxis=frameCoord) is obsidian — keeping the
 	 * obsidian ledge exposed while other blocks stay covered. Axes: 0=X, 1=Y, 2=Z. */
-	private static void emitWall(BufferBuilder buffer, ClientWorld world, Vec3d cam, boolean masked,
+	private static void emitWall(QuadSink sink, ClientWorld world, Vec3d cam, boolean masked,
 			int constAxis, float wallCamRel, int frameCoord,
 			int uAxis, double uMinW, double uMaxW, int vAxis, double vMinW, double vMaxW) {
 		double[] camA = {cam.x, cam.y, cam.z};
 		float[] c0 = new float[3], c1 = new float[3], c2 = new float[3], c3 = new float[3];
 		c0[constAxis] = c1[constAxis] = c2[constAxis] = c3[constAxis] = wallCamRel;
 		if (!masked) {
-			emitCell(buffer, c0, c1, c2, c3, uAxis, (float) (uMinW - camA[uAxis]), (float) (uMaxW - camA[uAxis]),
+			emitCell(sink, c0, c1, c2, c3, uAxis, (float) (uMinW - camA[uAxis]), (float) (uMaxW - camA[uAxis]),
 					vAxis, (float) (vMinW - camA[vAxis]), (float) (vMaxW - camA[vAxis]));
 			return;
 		}
@@ -978,25 +1342,26 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				if (world.getBlockState(pos.set(bp[0], bp[1], bp[2])).isOf(Blocks.OBSIDIAN)) {
 					continue; // keep the obsidian ledge exposed
 				}
-				emitCell(buffer, c0, c1, c2, c3, uAxis, uu0, uu1,
+				emitCell(sink, c0, c1, c2, c3, uAxis, uu0, uu1,
 						vAxis, (float) (Math.max(cv, vMinW) - camA[vAxis]), (float) (Math.min(cv + 1, vMaxW) - camA[vAxis]));
 			}
 		}
 	}
 
-	/** Write one POSITION-only quad in the given axis frame (constAxis already fixed on c0..c3). */
-	private static void emitCell(BufferBuilder buffer, float[] c0, float[] c1, float[] c2, float[] c3,
+	/** Write one quad in the given axis frame (constAxis already fixed on c0..c3) to the sink. */
+	private static void emitCell(QuadSink sink, float[] c0, float[] c1, float[] c2, float[] c3,
 			int uAxis, float u0, float u1, int vAxis, float v0, float v1) {
 		c0[uAxis] = u0; c0[vAxis] = v0;
 		c1[uAxis] = u1; c1[vAxis] = v0;
 		c2[uAxis] = u1; c2[vAxis] = v1;
 		c3[uAxis] = u0; c3[vAxis] = v1;
-		quad(buffer, c0[0], c0[1], c0[2], c1[0], c1[1], c1[2], c2[0], c2[1], c2[2], c3[0], c3[1], c3[2]);
+		sink.quad(c0[0], c0[1], c0[2], c1[0], c1[1], c1[2], c2[0], c2[1], c2[2], c3[0], c3[1], c3[2]);
 	}
 
 	private record Drawable(PortalRecord record, GlimpseTextures.GlimpseTexture texture,
 			List<BlockPos> blocks, Bounds bounds, int glimpseAlpha, int veilAlpha,
-			boolean viewerOnFaceA, float glimpseFade, float pushAmount, float pushSign, float encasement) {
+			boolean viewerOnFaceA, float glimpseFade, float pushAmount, float rttPushAmount, float pushSign,
+			float encasement) {
 	}
 
 	private static void emitGlimpse(MatrixStack.Entry entry, VertexConsumerProvider consumers,

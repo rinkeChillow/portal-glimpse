@@ -1,5 +1,6 @@
 package com.rinke.portalglimpse.mixin;
 
+import com.rinke.portalglimpse.capture.CaptureRenderer;
 import com.rinke.portalglimpse.render.GlimpseRenderers;
 
 import org.spongepowered.asm.mixin.Mixin;
@@ -29,6 +30,12 @@ public class IrisPipelineMixin {
 
 	@Inject(method = "finalizeLevelRendering", at = @At("TAIL"), remap = false, require = 0)
 	private void portalglimpse$drawOverlayAfterComposite(CallbackInfo ci) {
+		// A multi-frame capture is in progress: this composite IS a settling capture face. Grab/advance it
+		// (post-composite = correct timing) and DON'T draw our portal overlay into the capture.
+		if (CaptureRenderer.isActive()) {
+			CaptureRenderer.onCaptureFrameEnd();
+			return;
+		}
 		GlimpseRenderers.get().renderAfterShaders();
 	}
 }

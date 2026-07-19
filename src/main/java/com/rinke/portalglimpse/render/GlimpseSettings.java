@@ -29,6 +29,11 @@ public final class GlimpseSettings {
 	/** Master toggle for the glimpse view layer (H). The modded veil renders either way. */
 	public static boolean glimpsesVisible = true;
 
+	/** How the glimpse draws while an Iris shaderpack is active (see {@link ShaderRenderMethod}). No
+	 * effect without shaders. Default OVERLAY — the reliable post-composite path (RTT is still WIP:
+	 * Iris overwrites geometry drawn via world events, so RTT renders blank for now). */
+	public static ShaderRenderMethod shaderRenderMethod = ShaderRenderMethod.OVERLAY;
+
 	/** Entity-over-panorama (§ pt.14): a player standing in a glimpse portal (within half a block of its
 	 * plane) is re-rendered OVER the panorama, scissored to the opening, so they read as standing IN the
 	 * destination dimension. The band is hard-coded (see {@code PortalEntityMask}); this is the on/off. */
@@ -44,10 +49,20 @@ public final class GlimpseSettings {
 	 * h·cot(FOV)). Live-tunable (Numpad 8/2). */
 	public static float panoramaFovDegrees = 60.0F;
 
+	/** RTT-only: camera motion-prediction strength for the offscreen panorama render, as the lerp factor
+	 * (1.0 = no prediction / full 1-frame lag, 2.0 = full one-frame extrapolation). Cancels the RTT lag on
+	 * smooth motion; lower it toward 1.0 if fast flicks overshoot. Read on the render thread. */
+	public static volatile float rttMotionPrediction = 2.0F;
+
 	/** DEBUG (Numpad 0): freeze the player in nether portals — no dimension travel and no nausea
 	 * wobble — so the in-portal glimpse behaviour can be inspected without being teleported away.
 	 * Read from the render thread and (in singleplayer) the integrated-server thread. */
 	public static volatile boolean debugBlockPortalTravel = false;
+
+	/** DEBUG (Numpad 3): blit the offscreen RTT panorama framebuffer full-screen over the view, so its raw
+	 * contents can be inspected directly (independent of the portal quad's sampling). Read on the render
+	 * thread. Temporary diagnostic for the shader RTT path. */
+	public static volatile boolean debugRttBlit = false;
 
 	/** Master gate for ALL debug tooling — the tuning keybinds, the debug cubemap (K), the
 	 * loading-screen hold (Numpad 5) and the block-travel freeze (Numpad 0). Default OFF; toggled by

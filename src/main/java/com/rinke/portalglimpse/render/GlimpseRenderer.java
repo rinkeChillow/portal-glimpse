@@ -33,4 +33,12 @@ public interface GlimpseRenderer {
 	 */
 	default void renderAfterShaders() {
 	}
+
+	/**
+	 * Called during the entity phase (AFTER_ENTITIES) — the one point Iris captures geometry into its
+	 * gbuffers and shades it. Used by the RTT shader method to draw the panorama-textured quad + veil so
+	 * the shaderpack lights them. No-op unless a shaderpack is active and the RTT method is selected.
+	 */
+	default void renderInEntityPass(net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext context) {
+	}
 }

@@ -39,10 +39,12 @@ public final class GlimpseKeybinds {
 	private static final int KEY_DEBUG_PANORAMA = GLFW.GLFW_KEY_K;
 	private static final int KEY_BLOCK_TRAVEL = GLFW.GLFW_KEY_KP_0;
 	private static final int KEY_GHOST_FREEZE = GLFW.GLFW_KEY_KP_1;
+	private static final int KEY_RTT_BLIT = GLFW.GLFW_KEY_KP_3;
 
 	private static final int[] KEYS = {
 			KEY_VEIL_UP, KEY_VEIL_DOWN, KEY_TOGGLE_GLIMPSES, KEY_TOGGLE_FADE,
-			KEY_FOV_UP, KEY_FOV_DOWN, KEY_DEBUG_PANORAMA, KEY_BLOCK_TRAVEL, KEY_GHOST_FREEZE
+			KEY_FOV_UP, KEY_FOV_DOWN, KEY_DEBUG_PANORAMA, KEY_BLOCK_TRAVEL, KEY_GHOST_FREEZE,
+			KEY_RTT_BLIT
 	};
 	/** Previous frame's down-state per key, for rising-edge detection. */
 	private static final boolean[] WAS_DOWN = new boolean[KEYS.length];
@@ -126,6 +128,12 @@ public final class GlimpseKeybinds {
 		}
 		if (justPressed[8]) {
 			toggleGhostFreeze(client);
+		}
+		if (justPressed[9]) {
+			GlimpseSettings.debugRttBlit = !GlimpseSettings.debugRttBlit;
+			actionbar(client, GlimpseSettings.debugRttBlit
+					? "RTT FBO blit ON — offscreen panorama buffer shown full-screen"
+					: "RTT FBO blit OFF");
 		}
 		// While travel is blocked, keep the client's portal-nausea wobble pinned at zero.
 		if (GlimpseSettings.debugBlockPortalTravel && client.player != null) {
