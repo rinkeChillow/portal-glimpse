@@ -208,6 +208,11 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	private static Matrix4f rttViewPrev;
 	private static Vec3d rttCamPrev;
 
+	// Debug: floating 3x3 panorama previews (PanoramaSummonDebug), RTT method only. Built each frame in
+	// renderWorld and merged into rttDrawables so they render through the true RTT path (FBO + entity pass,
+	// Iris-shaded). Kept out of the real drawable list so they never touch the occluder / block-hiding / veil.
+	private static List<Drawable> frameDebugDrawables;
+
 	@Override
 	public String name() {
 		return "vanilla";
@@ -232,6 +237,16 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			GlimpseRenderState.clear(client);
 			TerrainOverride.clearPortal(client);
 			return;
+		}
+
+		// Debug 3x3 panorama previews (Ctrl+Shift + RMB) — RTT method only, per request. Built here (even with
+		// no real portals) and merged into rttDrawables below so they render through the true RTT path.
+		frameDebugDrawables = null;
+		if (IrisCompat.shadersActive() && GlimpseSettings.shaderRenderMethod == ShaderRenderMethod.RTT) {
+			List<Drawable> dbg = buildDebugDrawables(store, dimension);
+			if (!dbg.isEmpty()) {
+				frameDebugDrawables = dbg;
+			}
 		}
 
 		// Collect portals that should show a glimpse this frame.
@@ -478,7 +493,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				&& !GhostState.isActive();
 		TerrainOverride.syncPortal(client, rttOccluders ? buildOccluders(world, cameraPos, drawables) : Map.of());
 
-		if (drawables.isEmpty()) {
+		if (drawables.isEmpty() && frameDebugDrawables == null) {
 			return;
 		}
 
@@ -490,7 +505,14 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			if (GlimpseSettings.shaderRenderMethod == ShaderRenderMethod.RTT) {
 				// RTT: the FBO is rendered post-composite (renderAfterShaders) and drawn onto the portal
 				// at AFTER_ENTITIES (renderInEntityPass, the phase Iris captures). Stash this frame's data.
-				rttDrawables = drawables;
+				// Debug preview panoramas ride the same list so they get the real RTT (Iris-shaded) treatment.
+				if (frameDebugDrawables != null) {
+					List<Drawable> combined = new ArrayList<>(drawables);
+					combined.addAll(frameDebugDrawables);
+					rttDrawables = combined;
+				} else {
+					rttDrawables = drawables;
+				}
 				rttCam = cameraPos;
 				rttView = new Matrix4f(RenderSystem.getModelViewStack())
 						.mul(context.matrixStack().peek().getPositionMatrix());
@@ -598,6 +620,46 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	 * shaderpack's lighting/fog — acceptable for a captured photo of another dimension. No-op unless
 	 * renderWorld stashed panos this frame (which only happens when a shaderpack is active).
 	 */
+	/** Build one 3×3 panorama {@link Drawable} per {@link PanoramaSummonDebug} summon: a vertical grid of nine
+	 * air-position quads floating one block above the clicked block, in the FIXED cardinal orientation captured
+	 * at summon time (so it keeps its direction rather than swivelling to the camera), all showing the same
+	 * chosen glimpse. Empty when the tool is off or nothing is captured for this dimension. Kept out of the
+	 * real drawable list on purpose. */
+	private static List<Drawable> buildDebugDrawables(PortalStore store, Identifier dimension) {
+		if (!PanoramaSummonDebug.isActive()) {
+			return List.of();
+		}
+		PortalRecord chosen = PanoramaSummonDebug.chosen(store, dimension);
+		if (chosen == null) {
+			return List.of();
+		}
+		List<Drawable> out = new ArrayList<>();
+		for (Map.Entry<BlockPos, PanoramaSummonDebug.Summon> e : PanoramaSummonDebug.summons().entrySet()) {
+			BlockPos p = e.getKey();
+			boolean axisX = e.getValue().axisX();
+			boolean faceA = e.getValue().faceA();
+			int baseY = p.getY() + 1; // one block above the clicked block
+			List<BlockPos> blocks = new ArrayList<>(9);
+			for (int i = -1; i <= 1; i++) {
+				for (int j = 0; j < 3; j++) {
+					blocks.add(axisX
+							? new BlockPos(p.getX() + i, baseY + j, p.getZ())
+							: new BlockPos(p.getX(), baseY + j, p.getZ() + i));
+				}
+			}
+			Bounds b = Bounds.of(blocks);
+			// Reuse the chosen record's id/version/slots so PanoramaTextures loads its glimpse; override the
+			// geometry (axis + interior) to our floating 3×3. No push/veil — a flat preview quad.
+			PortalRecord rec = new PortalRecord(chosen.id, dimension,
+					new BlockPos(b.minX(), b.minY(), b.minZ()), blocks,
+					axisX ? Direction.Axis.X : Direction.Axis.Z,
+					chosen.auto, chosen.manual, chosen.linkedId, chosen.createdAt, chosen.updatedAt);
+			out.add(new Drawable(rec, null, blocks, b, 255, 0, faceA, 1.0F, 0.0F, 0.0F,
+					faceA ? 1.0F : -1.0F, 0.0F));
+		}
+		return out;
+	}
+
 	@Override
 	public void renderAfterShaders() {
 		// RTT method: render the panorama INTO the offscreen FBO here (post-composite), where our custom

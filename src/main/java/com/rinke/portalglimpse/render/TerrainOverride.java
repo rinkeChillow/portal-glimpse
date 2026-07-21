@@ -21,32 +21,20 @@ import net.minecraft.util.math.BlockPos;
  * depth (verified in the packs' GLSL), which no entity-pass or raw-GL draw ever wrote — but a hand-placed
  * block occludes them perfectly. This makes our occluder BE that block.
  *
- * <p>Two independent sources, both consulted on the mesh hot path (debug wins ties):
- * <ul>
- *   <li>{@link #syncPortal} — the per-frame portal god-ray occluder (diffs + reschedules changed chunks,
- *       exactly like {@link GlimpseRenderState#sync}).</li>
- *   <li>{@link #setDebug}/{@link #clearDebug} — the manual {@code ShadowBoxDebug} test cube.</li>
- * </ul>
+ * <p>Fed by {@link #syncPortal} — the per-frame portal god-ray occluder, which diffs the desired set and
+ * reschedules changed chunks, exactly like {@link GlimpseRenderState#sync}.
  *
  * <p>Read from chunk-build worker threads, written from the client thread — volatile immutable snapshots.
  */
 public final class TerrainOverride {
 
 	private static volatile Map<Long, BlockState> portal = Collections.emptyMap();
-	private static volatile Map<Long, BlockState> debug = Collections.emptyMap();
 
 	private TerrainOverride() {
 	}
 
 	/** The state the given packed position should mesh as, or {@code null} if not overridden. */
 	public static BlockState replacementFor(long posLong) {
-		Map<Long, BlockState> d = debug;
-		if (!d.isEmpty()) {
-			BlockState s = d.get(posLong);
-			if (s != null) {
-				return s;
-			}
-		}
 		Map<Long, BlockState> p = portal;
 		return p.isEmpty() ? null : p.get(posLong);
 	}
@@ -71,15 +59,6 @@ public final class TerrainOverride {
 
 	public static void clearPortal(MinecraftClient client) {
 		syncPortal(client, Collections.emptyMap());
-	}
-
-	/** Set the debug cube; the caller ({@code ShadowBoxDebug}) schedules its own re-mesh. */
-	public static void setDebug(Map<Long, BlockState> map) {
-		debug = map.isEmpty() ? Collections.emptyMap() : Map.copyOf(map);
-	}
-
-	public static void clearDebug() {
-		debug = Collections.emptyMap();
 	}
 
 	private static void reschedule(MinecraftClient client, Set<Long> changed) {
