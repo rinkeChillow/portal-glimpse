@@ -2,6 +2,7 @@ package com.rinke.portalglimpse.mixin;
 
 import com.rinke.portalglimpse.ghost.GhostState;
 import com.rinke.portalglimpse.render.GlimpseRenderState;
+import com.rinke.portalglimpse.render.TerrainOverride;
 
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
@@ -43,6 +44,12 @@ public class SodiumLevelSliceMixin {
 		BlockState ghostReplacement = GhostState.replacementFor(packed);
 		if (ghostReplacement != null) {
 			cir.setReturnValue(ghostReplacement);
+			return;
+		}
+		// Terrain injection (TerrainOverride) — see ChunkRendererRegionMixin; allocation-free packed lookup.
+		BlockState injected = TerrainOverride.replacementFor(packed);
+		if (injected != null) {
+			cir.setReturnValue(injected);
 		} else if (GlimpseRenderState.isHidden(packed)) {
 			cir.setReturnValue(Blocks.AIR.getDefaultState());
 		}

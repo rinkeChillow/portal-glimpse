@@ -24,6 +24,7 @@ import com.rinke.portalglimpse.ghost.GhostState;
 
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 
+import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gl.Framebuffer;
@@ -155,6 +156,22 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	 * would clip through it. Instead lift that box's bottom to this height above the opening bottom
 	 * (~1.1 above the block's base) so it clears the block: no z-fight, no poke-through. */
 	private static final float BOTTOM_LIFT = 0.11F;
+	/** Blocks of leeway outside the portal opening before the RTT box folds away (see {@link #rttOpeningGate}). */
+	private static final float RTT_GATE_MARGIN = 0.75F;
+	/** God-ray occluder (see {@link #buildOccluders}) is present only while the panorama is at least this solid.
+	 * The RTT dither snaps fully opaque at ~0.98, so above this there are no holes for the concrete to show
+	 * through; below it the occluder drops out and the dissolving panorama reveals the world+rays (not concrete)
+	 * — so the occluder "fades" in and out with the portal instead of alpha-fading (terrain can't be translucent
+	 * and still write the opaque depth the rays stop at). */
+	private static final float OCCLUDER_FADE_MIN = 0.96F;
+	/** How far (blocks) the occluder cage grows OUTWARD on the cross-axes at full push, so the all-around
+	 * protection wraps the departure box (which grows by {@link #BOX_MARGIN_RTT}) once the player enters. Scales
+	 * with the push: 0 when far (a bare plane exactly behind the opening) → this when fully entered. */
+	private static final int OCCLUDER_ENTER_GROW = 2;
+	/** The occluder is only built when the eye is looking through the opening — {@code max(openingGate, push)}
+	 * must reach this. So stepping to the side or above (where the panorama box also folds away) hides the
+	 * occluder blocks instead of leaving them poking out behind the portal. */
+	private static final float OCCLUDER_GATE_MIN = 0.5F;
 
 	/** Minimum depth (blocks) of the invisible occluder cage behind an occupied portal — deep enough to
 	 * clear a player standing 1 block in (plus his body), so the cage never clips him. Grows with the
@@ -213,6 +230,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		// portals are 100% vanilla (not just the glimpse hidden — the whole overlay is off).
 		if (!GlimpseSettings.glimpsesVisible) {
 			GlimpseRenderState.clear(client);
+			TerrainOverride.clearPortal(client);
 			return;
 		}
 
@@ -324,8 +342,15 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			// enter. playerInside pins it to 1. Only the RTT paths read this; overlay/vanilla use pushAmount.
 			double rttSurfaceN = record.axis == Direction.Axis.X ? bounds.minZ() + 0.5 : bounds.minX() + 0.5;
 			double rttEyeN = record.axis == Direction.Axis.X ? cameraPos.z : cameraPos.x;
+			// ...but that is a DEPTH-only measure (distance along the portal normal), so standing BESIDE a portal
+			// at the same depth still pushed a full box, whose side walls stick out into open air and show the
+			// panorama from outside. Gate it on the eye also being within the opening's own footprint — step
+			// aside and the push eases to 0, so emitRttQuad falls back to the flat opening plane and there are
+			// no walls left to leak. This is the outside mask. playerInside keeps its hard 1 (you're looking
+			// straight through, and the eye can sit fractionally outside the frame while inside the portal).
 			float rttPushAmount = playerInside ? 1.0F
-					: Math.max(0.0F, Math.min(1.0F, 1.0F - (float) Math.abs(rttEyeN - rttSurfaceN) / EYE_PUSH_RTT));
+					: Math.max(0.0F, Math.min(1.0F, 1.0F - (float) Math.abs(rttEyeN - rttSurfaceN) / EYE_PUSH_RTT))
+							* rttOpeningGate(bounds, record.axis, cameraPos);
 			// Encasement: as the teleport swirl (nausea) builds while you stand in the portal, the destination
 			// panorama ALSO fades in on the OTHER side, wrapping around you until it fully encases you at the
 			// moment of teleport. Fade-IN tracks the swirl (nausea rises slowly); stepping out collapses the
@@ -442,6 +467,16 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			lastShadersActive = shaders;
 			GlimpseRenderState.reschedule(client);
 		}
+
+		// GOD-RAY OCCLUDER (RTT + shaders only): inject a hollow cage of opaque terrain wrapping the destination
+		// side of each portal's panorama box, so it writes the gbuffer depth the shaderpack's volumetric march
+		// reads — the sun's rays then stop there instead of shining through, exactly like a hand-placed block.
+		// The cage tracks the RTT push (depth) and the portal's fade (presence). Not during a capture
+		// (GhostState) and not on the overlay path (its panorama draws post-composite, over the rays already).
+		// See buildOccluders / TerrainOverride.
+		boolean rttOccluders = shaders && GlimpseSettings.shaderRenderMethod == ShaderRenderMethod.RTT
+				&& !GhostState.isActive();
+		TerrainOverride.syncPortal(client, rttOccluders ? buildOccluders(world, cameraPos, drawables) : Map.of());
 
 		if (drawables.isEmpty()) {
 			return;
@@ -1216,6 +1251,119 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			buffer.vertex(plane, y0, zb);
 			buffer.vertex(plane, y1, zb);
 		}
+	}
+
+	/**
+	 * Lateral gate for the RTT box: 1 while the eye is within the portal opening's own footprint (the two axes
+	 * ACROSS the portal — its width and its height), easing to 0 over {@link #RTT_GATE_MARGIN} blocks as the eye
+	 * moves outside it.
+	 *
+	 * <p>{@code rttPushAmount} is otherwise driven purely by depth along the portal normal, which says nothing
+	 * about whether you are actually looking THROUGH the opening. Standing beside a portal therefore still built
+	 * the full pushed box, and its side walls — running up to {@link #EYE_PUSH_RTT} blocks out the back into open
+	 * air — rendered the panorama for anyone viewing from outside. Folding the push to 0 out there drops the
+	 * walls entirely (the flat opening plane is drawn instead), which is what masks the outside.
+	 */
+	private static float rttOpeningGate(Bounds b, Direction.Axis axis, Vec3d cam) {
+		// axis X ⇒ normal runs along Z, so the portal spans X (width) and Y; axis Z ⇒ normal along X, spans Z and Y.
+		double hLo, hHi, hEye;
+		if (axis == Direction.Axis.X) {
+			hLo = b.minX();
+			hHi = b.maxX() + 1;
+			hEye = cam.x;
+		} else {
+			hLo = b.minZ();
+			hHi = b.maxZ() + 1;
+			hEye = cam.z;
+		}
+		return Math.min(gateAxis(hEye, hLo, hHi), gateAxis(cam.y, b.minY(), b.maxY() + 1));
+	}
+
+	/** 1 inside [lo,hi], easing linearly to 0 over {@link #RTT_GATE_MARGIN} blocks outside it. */
+	private static float gateAxis(double c, double lo, double hi) {
+		double d = Math.max(lo - c, c - hi); // > 0 only once the eye is outside the span
+		if (d <= 0.0) {
+			return 1.0F;
+		}
+		if (d >= RTT_GATE_MARGIN) {
+			return 0.0F;
+		}
+		return 1.0F - (float) (d / RTT_GATE_MARGIN);
+	}
+
+	/**
+	 * Build the RTT god-ray occluder: for each portal showing a solid glimpse, a hollow cage of the
+	 * {@link OccluderBlock} (injected as terrain via {@link TerrainOverride}) tucked BEHIND the panorama on the
+	 * destination side — a back plane plus one-block-thick perimeter side walls. It writes the opaque gbuffer
+	 * depth a shaderpack's volumetric march stops at, so the sun's rays stop on it instead of shining through.
+	 *
+	 * <p>Its shape tracks the departure push, so it does two jobs:
+	 * <ul>
+	 *   <li><b>Far / idle</b> (push ≈ 0): a bare 1-block-thick plane sized to the OPENING exactly, one block
+	 *       directly behind the portal blocks. The opaque panorama (which covers the opening on screen) hides
+	 *       it, so there is no visible box — it just protects the flat glimpse from the sun.</li>
+	 *   <li><b>Entering</b> (push &gt; 0, the glimpse slides back and the box grows): the plane grows into the
+	 *       all-around cage — deeper ({@code 1 + round(push·EYE_PUSH_RTT)}) AND wider on the cross-axes
+	 *       ({@code round(push·OCCLUDER_ENTER_GROW)}) — so it wraps the expanding, {@link #BOX_MARGIN_RTT}-grown
+	 *       departure box and blocks the rays from every side.</li>
+	 * </ul>
+	 *
+	 * <p>Never replaces real blocks (skips occupied positions — they already occlude). {@link OccluderBlock}
+	 * culls like glass, so growing/shrinking/removing it never leaves holes in the surrounding terrain. Skipped
+	 * below {@link #OCCLUDER_FADE_MIN} so it fades in and out with the portal (see that field). It can't be made
+	 * truly invisible — catching the rays REQUIRES an opaque depth-writing surface — but the far plane hides
+	 * behind the panorama, and the visible cage only appears once you're entering (where it reads as intended).
+	 */
+	private static Map<Long, BlockState> buildOccluders(ClientWorld world, Vec3d cam, List<Drawable> drawables) {
+		if (drawables.isEmpty() || OccluderBlock.INSTANCE == null || world == null) {
+			return Map.of();
+		}
+		BlockState occluder = OccluderBlock.INSTANCE.getDefaultState();
+		Map<Long, BlockState> out = new HashMap<>();
+		BlockPos.Mutable probe = new BlockPos.Mutable();
+		for (Drawable d : drawables) {
+			// Fade with the portal: only occlude while the panorama is essentially opaque (no dither holes).
+			if (d.glimpseFade() < OCCLUDER_FADE_MIN) {
+				continue;
+			}
+			Bounds b = d.bounds();
+			boolean axisX = d.record().axis == Direction.Axis.X;
+			float push = d.rttPushAmount();
+			// Outside mask: only show the occluder when the eye is looking through the opening (openingGate) OR
+			// pushing in — otherwise (viewing from the side / above) hide it so the blocks don't poke out behind
+			// the portal, the same fold-away the panorama box gets.
+			if (Math.max(rttOpeningGate(b, d.record().axis, cam), push) < OCCLUDER_GATE_MIN) {
+				continue;
+			}
+			int sign = d.viewerOnFaceA() ? 1 : -1; // destination side (away from viewer), behind the panorama
+			int dep = 1 + Math.round(push * EYE_PUSH_RTT);       // depth: 1 when far → deeper on entry
+			int grow = Math.round(push * OCCLUDER_ENTER_GROW);   // width: 0 when far → all-around on entry
+			// Cross-axes across the portal: U (X for axisX, else Z) and Y; the opening rectangle grown by `grow`.
+			int uMin = (axisX ? b.minX() : b.minZ()) - grow;
+			int uMax = (axisX ? b.maxX() : b.maxZ()) + grow;
+			int yMin = b.minY() - grow;
+			int yMax = b.maxY() + grow;
+			int normalBase = axisX ? b.minZ() : b.minX(); // portal plane along the normal axis
+			for (int depth = 1; depth <= dep; depth++) {
+				int n = normalBase + sign * depth;
+				boolean back = depth == dep; // deepest layer is a full plane; the layers before it are side walls
+				for (int u = uMin; u <= uMax; u++) {
+					for (int y = yMin; y <= yMax; y++) {
+						boolean perimeter = u == uMin || u == uMax || y == yMin || y == yMax;
+						if (!back && !perimeter) {
+							continue; // hollow: the panorama box lives inside; only walls + back cap it
+						}
+						int wx = axisX ? u : n;
+						int wz = axisX ? n : u;
+						if (!world.getBlockState(probe.set(wx, y, wz)).isAir()) {
+							continue; // never replace real blocks (they already occlude anyway)
+						}
+						out.put(probe.asLong(), occluder);
+					}
+				}
+			}
+		}
+		return out;
 	}
 
 	/** True if any solid block sits along a portal edge's frame line, one block out on the destination

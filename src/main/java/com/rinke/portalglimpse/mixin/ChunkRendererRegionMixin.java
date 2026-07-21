@@ -2,6 +2,7 @@ package com.rinke.portalglimpse.mixin;
 
 import com.rinke.portalglimpse.ghost.GhostState;
 import com.rinke.portalglimpse.render.GlimpseRenderState;
+import com.rinke.portalglimpse.render.TerrainOverride;
 
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
@@ -34,6 +35,13 @@ public class ChunkRendererRegionMixin {
 		BlockState ghostReplacement = GhostState.replacementFor(pos);
 		if (ghostReplacement != null) {
 			cir.setReturnValue(ghostReplacement);
+			return;
+		}
+		// Terrain injection (TerrainOverride): mesh a substitute state at chosen positions — real terrain
+		// to every renderer/shaderpack (god-ray occlusion work; also the shadow-cube debug tool).
+		BlockState injected = TerrainOverride.replacementFor(pos.asLong());
+		if (injected != null) {
+			cir.setReturnValue(injected);
 		} else if (GlimpseRenderState.isHidden(pos)) {
 			cir.setReturnValue(Blocks.AIR.getDefaultState());
 		}

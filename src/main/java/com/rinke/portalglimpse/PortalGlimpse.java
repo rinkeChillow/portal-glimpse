@@ -1,5 +1,7 @@
 package com.rinke.portalglimpse;
 
+import com.rinke.portalglimpse.render.OccluderBlock;
+
 import net.fabricmc.api.ModInitializer;
 
 import net.minecraft.util.Identifier;
@@ -15,6 +17,10 @@ public class PortalGlimpse implements ModInitializer {
 	public void onInitialize() {
 		// Common entrypoint. This is a 100% client-side mod (design doc §2) — no server
 		// logic lives here; see PortalGlimpseClient for the real initialization.
+		// The one exception: the god-ray occluder block must be registered before registries
+		// freeze (blocks can't register from the client entrypoint), though it is only ever used
+		// client-side via terrain-mesh injection (TerrainOverride) and never placed in the world.
+		OccluderBlock.register();
 		LOGGER.info("Portal Glimpse loaded.");
 	}
 

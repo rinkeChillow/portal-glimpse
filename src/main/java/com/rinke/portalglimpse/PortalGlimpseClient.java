@@ -13,6 +13,7 @@ import com.rinke.portalglimpse.render.GlimpseWorldRendering;
 import com.rinke.portalglimpse.render.PortalArrivalGate;
 import com.rinke.portalglimpse.render.PortalArrivalVeil;
 import com.rinke.portalglimpse.render.PortalTransitionView;
+import com.rinke.portalglimpse.render.ShadowBoxDebug;
 import com.rinke.portalglimpse.travel.TravelTracker;
 
 import net.fabricmc.api.ClientModInitializer;
@@ -50,6 +51,11 @@ public class PortalGlimpseClient implements ClientModInitializer {
 		// Hidden "/pgdebug" command gates all the debug keybinds/tools above (default off) so normal
 		// players never trigger them — only someone who knows the exact command can turn them on.
 		DebugCommand.register();
+
+		// God-ray debug tool (/pgdebug only): Ctrl+Shift+right-click a non-portal block to plant a solid
+		// cube injected into Iris's shadow pass — the isolated shadow-map-vs-volumetric-rays test.
+		// Registered AFTER ManualCapture so portal clicks are consumed by it first.
+		ShadowBoxDebug.register();
 
 		// Player-facing keybinds (default unbound): toggle glimpses, open the config screen.
 		GlimpseHotkeys.register();
