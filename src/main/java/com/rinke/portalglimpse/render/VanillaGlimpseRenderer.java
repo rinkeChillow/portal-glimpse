@@ -17,6 +17,7 @@ import org.lwjgl.opengl.GL30;
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 
+import com.rinke.portalglimpse.config.UnsupportedShaderScreen;
 import com.rinke.portalglimpse.data.PortalRecord;
 import com.rinke.portalglimpse.data.PortalStore;
 import com.rinke.portalglimpse.detect.PortalDetection;
@@ -483,6 +484,23 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			GlimpseRenderState.reschedule(client);
 		}
 
+		// Recognise the active shaderpack and pick up its RTT calibration. Logs on every swap; once per swap,
+		// if we have no tuning for it, put the prompt in the player's face (RTT only — the other paths don't use
+		// the calibration). It deliberately INTERRUPTS whatever screen is open: pack swaps happen inside the
+		// shaderpack menu, so refusing to stomp would mean never showing it when it matters. Whatever it
+		// interrupted becomes its parent, so closing the prompt puts the player back where they were. Deferred
+		// via execute() because we're mid-render here; skipped only if our own prompt is already up (no re-entry).
+		if (shaders && ShaderPackCalibration.noteCurrentPack()
+				&& GlimpseSettings.shaderRenderMethod == ShaderRenderMethod.RTT
+				&& !ShaderPackCalibration.lastSeenSupported()) {
+			String unsupported = ShaderPackCalibration.packName().orElse("?");
+			client.execute(() -> {
+				if (client.player != null && !(client.currentScreen instanceof UnsupportedShaderScreen)) {
+					client.setScreen(new UnsupportedShaderScreen(client.currentScreen, unsupported));
+				}
+			});
+		}
+
 		// GOD-RAY OCCLUDER (RTT + shaders only): inject a hollow cage of opaque terrain wrapping the destination
 		// side of each portal's panorama box, so it writes the gbuffer depth the shaderpack's volumetric march
 		// reads — the sun's rays then stop there instead of shining through, exactly like a hand-placed block.
@@ -898,7 +916,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	 * {@link PortalRenderLayers#unlitGlimpse} rather than {@code getItemEntityTranslucentCull}, so the pack
 	 * leaves it unshaded exactly like the panorama behind it (otherwise the postcard would be lit and the
 	 * panorama not, and the crossfade would visibly shift brightness), and it carries the same
-	 * {@link #RTT_UNLIT_DIM} counter-dim. Depth is written only while it's essentially opaque, for the same
+	 * per-pack counter-dim ({@link #rttUnlitDim}). Depth is written only while it's essentially opaque, for the same
 	 * reason as the panorama (see {@code PortalRenderLayers.COLOR_ONLY}).
 	 */
 	private static void emitRttPostcard(MatrixStack.Entry entry, VertexConsumerProvider consumers,
@@ -917,7 +935,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				? PortalRenderLayers.unlitGlimpse(texture, alpha >= 250)
 				: RenderLayer.getItemEntityTranslucentCull(texture);
 		VertexConsumer vc = consumers.getBuffer(layer);
-		int tint = RTT_UNLIT ? Math.round(255 * RTT_UNLIT_DIM) : 255;
+		int tint = RTT_UNLIT ? Math.round(255 * rttUnlitDim()) : 255;
 		Bounds b = drawable.bounds();
 		boolean axisX = drawable.record().axis == Direction.Axis.X;
 		for (BlockPos pos : drawable.blocks()) {
@@ -931,11 +949,12 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	/** Draw the RTT panorama through the beacon-beam render type so Iris routes it to the shaderpacks' UNLIT
 	 * `gbuffers_beaconbeam` program — killing AO and all per-face surface shading. See renderInEntityPass. */
 	private static final boolean RTT_UNLIT = true;
-	/** Counter-dim for the unlit routing. Both packs start with {@code albedo = texture * color}, so the vertex
-	 * colour is a universal brightness dial. BSL's beaconbeam then does {@code pow(albedo, 2.2) * 4.0}; solving
-	 * {@code pow(c, 2.2) * 4 = 1} gives c ≈ 0.53, which cancels that ×4 almost exactly. Photon's full-emissive
-	 * path scales differently, so treat this as a tunable: lower = dimmer. Only used when RTT_UNLIT. */
-	private static final float RTT_UNLIT_DIM = 0.40F;
+	/** Counter-dim for the unlit routing, now supplied PER SHADERPACK — each pack's beaconbeam applies its own
+	 * emissive maths to our texture, so one constant can't serve them all. See {@link ShaderPackCalibration}.
+	 * Only consulted when {@link #RTT_UNLIT}. */
+	private static float rttUnlitDim() {
+		return ShaderPackCalibration.currentOrFallback().unlitDim();
+	}
 
 	/**
 	 * Emits the portal-opening plane as an {@link #RTT_TESS}×{@code RTT_TESS} grid of small quads, each corner
@@ -1085,8 +1104,8 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			v = clip.y / clip.w * 0.5F + 0.5F; // framebuffer texture is bottom-up: NDC top (+1) → v=1 (fb top)
 		}
 		// Vertex colour doubles as the brightness dial on the unlit path (albedo = texture * color in both
-		// packs) — see RTT_UNLIT_DIM. Full white on the normal lit path, as before.
-		int tint = RTT_UNLIT ? Math.round(255 * RTT_UNLIT_DIM) : 255;
+		// packs) — see rttUnlitDim(), which is per-shaderpack. Full white on the normal lit path, as before.
+		int tint = RTT_UNLIT ? Math.round(255 * rttUnlitDim()) : 255;
 		vertex(entry, vc, wx, wy, wz, u, v, 255, tint, tint, tint);
 	}
 

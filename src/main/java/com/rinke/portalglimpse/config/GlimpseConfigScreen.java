@@ -8,6 +8,7 @@ import com.rinke.portalglimpse.data.PortalRecord;
 import com.rinke.portalglimpse.data.PortalStore;
 import com.rinke.portalglimpse.detect.PortalDetection;
 import com.rinke.portalglimpse.render.PanoramaTextures;
+import com.rinke.portalglimpse.render.ShaderPackCalibration;
 import com.rinke.portalglimpse.render.ShaderRenderMethod;
 
 import me.shedaniel.clothconfig2.api.ConfigBuilder;
@@ -76,6 +77,19 @@ public final class GlimpseConfigScreen {
 		// RTT-only options (only relevant to the render-to-texture method). Shown only when RTT is the active
 		// method — change the method and reopen the screen to see/hide them.
 		if (config.shaderRenderMethod == ShaderRenderMethod.RTT) {
+			// Read-only status: which shaderpack Iris reports, and whether we have RTT calibration tuned for it.
+			// An uncalibrated pack still renders (on a fallback dim) but can look too dark/washed/blown out.
+			general.addEntry(entry.startTextDescription(
+					ShaderPackCalibration.packName()
+							.map(name -> ShaderPackCalibration.isCurrentPackSupported()
+									? Text.translatable("portal-glimpse.config.shaderpackStatus.supported", name)
+											.formatted(Formatting.GREEN)
+									: Text.translatable("portal-glimpse.config.shaderpackStatus.unsupported", name)
+											.formatted(Formatting.YELLOW))
+							.orElse(Text.translatable("portal-glimpse.config.shaderpackStatus.none")
+									.formatted(Formatting.GRAY)))
+					.build());
+
 			general.addEntry(entry.startBooleanToggle(
 							Text.translatable("portal-glimpse.config.godRayOccluder"), config.godRayOccluder)
 					.setDefaultValue(true)
