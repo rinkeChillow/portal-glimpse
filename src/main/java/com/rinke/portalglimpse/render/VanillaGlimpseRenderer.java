@@ -862,20 +862,68 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		// So every face of the box is shaded identically and the pack's AO can't crease the seams. Kept
 		// translucent so the FBO's transparent pixels still reveal-behind (the box masking relies on it).
 		// Flip RTT_UNLIT to compare against the old lit routing.
-		// The `false` (non-translucent) beacon-beam variant is the one that fixes clouds/water punching through:
-		// vanilla builds it with ALL_MASK (writes colour AND DEPTH), whereas the translucent variant uses
-		// COLOR_MASK and writes no depth at all — which is why the panorama stopped occluding anything. Same
-		// program either way, so the unlit routing (and the seam fix) is unaffected.
-		VertexConsumer glimpse = consumers.getBuffer(RTT_UNLIT
-				? RenderLayer.getBeaconBeam(rttTex, false)
-				: RenderLayer.getItemEntityTranslucentCull(rttTex));
+		// Our own layer: the unlit beacon-beam program (no AO / no per-face shading) with translucent blending
+		// (so the fade dither reveals what's behind instead of going black). Depth is written ONLY while this
+		// portal's glimpse is opaque — see PortalRenderLayers.COLOR_ONLY: depth isn't blended, so writing it for
+		// transparent fragments stamps the portal plane over whatever shows through and the pack's deferred pass
+		// then renders that flat/unshaded. Chosen per portal, since each has its own fade.
 		for (Drawable drawable : drawables) {
-			emitRttQuad(entry, glimpse, drawable, cameraPos, mvp);
+			RenderLayer layer = RTT_UNLIT
+					? PortalRenderLayers.unlitGlimpse(rttTex, drawable.glimpseFade() >= OCCLUDER_FADE_MIN)
+					: RenderLayer.getItemEntityTranslucentCull(rttTex);
+			emitRttQuad(entry, consumers.getBuffer(layer), drawable, cameraPos, mvp);
 		}
-		if (consumers instanceof VertexConsumerProvider.Immediate immediate) {
+		VertexConsumerProvider.Immediate immediate =
+				consumers instanceof VertexConsumerProvider.Immediate imm ? imm : null;
+		if (immediate != null) {
+			immediate.draw(); // flush the panorama FIRST so the postcard blends OVER it (the §4.2 crossfade)
+		}
+		// Pass 1: the postcard — the flat captured face, sitting a hair in front of the panorama plane and
+		// fading out with proximity to reveal it. Same crossfade the vanilla path does; here it rides the same
+		// unlit routing as the panorama so the two match while cross-fading.
+		for (Drawable drawable : drawables) {
+			emitRttPostcard(entry, consumers, drawable);
+		}
+		if (immediate != null) {
 			immediate.draw();
 		}
 		matrices.pop();
+	}
+
+	/**
+	 * The RTT counterpart of {@link #emitGlimpse}: the flat postcard drawn on the portal face, cover-fit and
+	 * single-face, fading with proximity so the parallax panorama shows through up close.
+	 *
+	 * <p>Differences from the vanilla path, so it "respects" RTT: it goes through
+	 * {@link PortalRenderLayers#unlitGlimpse} rather than {@code getItemEntityTranslucentCull}, so the pack
+	 * leaves it unshaded exactly like the panorama behind it (otherwise the postcard would be lit and the
+	 * panorama not, and the crossfade would visibly shift brightness), and it carries the same
+	 * {@link #RTT_UNLIT_DIM} counter-dim. Depth is written only while it's essentially opaque, for the same
+	 * reason as the panorama (see {@code PortalRenderLayers.COLOR_ONLY}).
+	 */
+	private static void emitRttPostcard(MatrixStack.Entry entry, VertexConsumerProvider consumers,
+			Drawable drawable) {
+		int alpha = drawable.glimpseAlpha();
+		if (alpha <= 0 || drawable.texture() == null) {
+			return; // fully faded by proximity — the panorama alone is the glimpse here
+		}
+		Identifier texture = drawable.viewerOnFaceA()
+				? drawable.texture().faceA()
+				: drawable.texture().faceB();
+		if (texture == null) {
+			return;
+		}
+		RenderLayer layer = RTT_UNLIT
+				? PortalRenderLayers.unlitGlimpse(texture, alpha >= 250)
+				: RenderLayer.getItemEntityTranslucentCull(texture);
+		VertexConsumer vc = consumers.getBuffer(layer);
+		int tint = RTT_UNLIT ? Math.round(255 * RTT_UNLIT_DIM) : 255;
+		Bounds b = drawable.bounds();
+		boolean axisX = drawable.record().axis == Direction.Axis.X;
+		for (BlockPos pos : drawable.blocks()) {
+			emitFace(entry, vc, pos, b, axisX, drawable.viewerOnFaceA(), alpha,
+					tint, tint, tint, 0.0F, 0.0F, 1.0F, 1.0F, 0.0F);
+		}
 	}
 
 	/** Grid subdivisions per axis for the RTT quad (see {@link #emitRttQuad}). */
@@ -920,9 +968,15 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 					EYE_PUSH_RTT, BOX_MARGIN_RTT);
 			return;
 		}
-		// Not pushed: the flat opening plane, tessellated.
+		// Not pushed: the flat opening plane, tessellated. Offset BEHIND the postcard by PANORAMA_OFFSET, exactly
+		// as the FBO's own emitPanoramaQuad does (faceA looks toward -axis, faceB toward +axis, so "away from
+		// the viewer" flips sign with the face). Two reasons this must match the FBO: the postcard sits on the
+		// bare plane, so without the offset the two quads are COPLANAR and z-fight (which also swallows the
+		// crossfade — you see them flicker instead of one dissolving into the other); and the RTT quad samples
+		// the FBO by SCREEN position, so sharing the FBO's exact world plane keeps that sampling 1:1.
 		float planeFrac = faceA ? PLANE_LOW : PLANE_HIGH;
-		float plane = axisX ? (b.minZ() + planeFrac) : (b.minX() + planeFrac);
+		float back = faceA ? PANORAMA_OFFSET : -PANORAMA_OFFSET;
+		float plane = (axisX ? (b.minZ() + planeFrac) : (b.minX() + planeFrac)) + back;
 		float hMin = axisX ? b.minX() : b.minZ();
 		float hMax = axisX ? (b.maxX() + 1) : (b.maxZ() + 1);
 		float yMin = b.minY();

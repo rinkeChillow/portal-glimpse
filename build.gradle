@@ -7,6 +7,10 @@ version = project.mod_version
 group = project.maven_group
 
 loom {
+	// Widens a handful of protected/private vanilla render members so we can build one custom RenderLayer
+	// that vanilla doesn't ship (unlit beacon-beam program + translucent blending + depth write).
+	accessWidenerPath = file("src/main/resources/portal-glimpse.accesswidener")
+
 	// This template uses the fabric-loom-remap plugin variant, which does NOT auto-wire the
 	// Mixin annotation processor — so no refmap was generated and mixins silently never applied.
 	// Force the legacy AP path so a refmap is produced and mixins bind at runtime.
