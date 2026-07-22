@@ -73,9 +73,16 @@ public final class GlimpseConfigScreen {
 				.setSaveConsumer(v -> config.shaderRenderMethod = v)
 				.build());
 
-		// RTT-only: motion-prediction strength (only relevant to the render-to-texture method). Shown only
-		// when RTT is the active method — change the method and reopen the screen to see/hide it.
+		// RTT-only options (only relevant to the render-to-texture method). Shown only when RTT is the active
+		// method — change the method and reopen the screen to see/hide them.
 		if (config.shaderRenderMethod == ShaderRenderMethod.RTT) {
+			general.addEntry(entry.startBooleanToggle(
+							Text.translatable("portal-glimpse.config.godRayOccluder"), config.godRayOccluder)
+					.setDefaultValue(true)
+					.setTooltip(Text.translatable("portal-glimpse.config.godRayOccluder.tooltip"))
+					.setSaveConsumer(v -> config.godRayOccluder = v)
+					.build());
+
 			general.addEntry(entry.startIntSlider(
 							Text.translatable("portal-glimpse.config.rttPrediction"),
 							config.rttMotionPredictionPercent, 0, 100)

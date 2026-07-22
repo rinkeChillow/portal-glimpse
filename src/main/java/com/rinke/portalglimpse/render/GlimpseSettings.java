@@ -43,6 +43,12 @@ public final class GlimpseSettings {
 	 * crossfade will eventually take over the close range this frees up. */
 	public static boolean proximityFade = true;
 
+	/** RTT + shaders only: inject the invisible "god-ray occluder" — a cage of opaque terrain tucked behind the
+	 * panorama so a shaderpack's volumetric light stops on it instead of shining through the glimpse. Turn OFF
+	 * to see whether the rays still pierce the panorama on their own (the RTT quad now writes depth itself, so
+	 * the cage may be redundant). See {@code VanillaGlimpseRenderer#buildOccluders}. */
+	public static boolean godRayOccluder = true;
+
 	/** Half field-of-view (degrees) the portal shows of the destination panorama (§4.1). The sphere
 	 * radius is derived per-frame so the destination scales with the portal (no telephoto) as you move.
 	 * Higher = wider view / smaller content, and brings the scaling's onset closer (critical distance

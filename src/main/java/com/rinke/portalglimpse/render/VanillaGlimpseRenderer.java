@@ -489,7 +489,8 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		// The cage tracks the RTT push (depth) and the portal's fade (presence). Not during a capture
 		// (GhostState) and not on the overlay path (its panorama draws post-composite, over the rays already).
 		// See buildOccluders / TerrainOverride.
-		boolean rttOccluders = shaders && GlimpseSettings.shaderRenderMethod == ShaderRenderMethod.RTT
+		boolean rttOccluders = shaders && GlimpseSettings.godRayOccluder
+				&& GlimpseSettings.shaderRenderMethod == ShaderRenderMethod.RTT
 				&& !GhostState.isActive();
 		TerrainOverride.syncPortal(client, rttOccluders ? buildOccluders(world, cameraPos, drawables) : Map.of());
 
@@ -852,7 +853,22 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		Identifier rttTex = DEBUG_RTT_KNOWN_TEXTURE
 				? Identifier.of("minecraft", "textures/atlas/blocks.png") // known-resident, opaque swatches
 				: RTT_TEX_ID;
-		VertexConsumer glimpse = consumers.getBuffer(RenderLayer.getItemEntityTranslucentCull(rttTex));
+		// UNLIT ROUTING: draw the panorama through the BEACON-BEAM render type. Iris maps it to
+		// `gbuffers_beaconbeam`, which both shaderpacks render WITHOUT any surface shading:
+		//   BSL  (program/gbuffers_beaconbeam.glsl): `gl_FragData[0] = albedo;` — the texture goes straight to
+		//        the colour buffer; no diffuse, no AO, no shadows, and it writes no normal/material buffers.
+		//   Photon (include/vertex/utility.glsl, get_material_mask): the beaconbeam program returns material 32
+		//        "full emissive" and forces light_levels.x = 1.0.
+		// So every face of the box is shaded identically and the pack's AO can't crease the seams. Kept
+		// translucent so the FBO's transparent pixels still reveal-behind (the box masking relies on it).
+		// Flip RTT_UNLIT to compare against the old lit routing.
+		// The `false` (non-translucent) beacon-beam variant is the one that fixes clouds/water punching through:
+		// vanilla builds it with ALL_MASK (writes colour AND DEPTH), whereas the translucent variant uses
+		// COLOR_MASK and writes no depth at all — which is why the panorama stopped occluding anything. Same
+		// program either way, so the unlit routing (and the seam fix) is unaffected.
+		VertexConsumer glimpse = consumers.getBuffer(RTT_UNLIT
+				? RenderLayer.getBeaconBeam(rttTex, false)
+				: RenderLayer.getItemEntityTranslucentCull(rttTex));
 		for (Drawable drawable : drawables) {
 			emitRttQuad(entry, glimpse, drawable, cameraPos, mvp);
 		}
@@ -864,6 +880,14 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 
 	/** Grid subdivisions per axis for the RTT quad (see {@link #emitRttQuad}). */
 	private static final int RTT_TESS = 24;
+	/** Draw the RTT panorama through the beacon-beam render type so Iris routes it to the shaderpacks' UNLIT
+	 * `gbuffers_beaconbeam` program — killing AO and all per-face surface shading. See renderInEntityPass. */
+	private static final boolean RTT_UNLIT = true;
+	/** Counter-dim for the unlit routing. Both packs start with {@code albedo = texture * color}, so the vertex
+	 * colour is a universal brightness dial. BSL's beaconbeam then does {@code pow(albedo, 2.2) * 4.0}; solving
+	 * {@code pow(c, 2.2) * 4 = 1} gives c ≈ 0.53, which cancels that ×4 almost exactly. Photon's full-emissive
+	 * path scales differently, so treat this as a tunable: lower = dimmer. Only used when RTT_UNLIT. */
+	private static final float RTT_UNLIT_DIM = 0.40F;
 
 	/**
 	 * Emits the portal-opening plane as an {@link #RTT_TESS}×{@code RTT_TESS} grid of small quads, each corner
@@ -1006,7 +1030,10 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			u = clip.x / clip.w * 0.5F + 0.5F;
 			v = clip.y / clip.w * 0.5F + 0.5F; // framebuffer texture is bottom-up: NDC top (+1) → v=1 (fb top)
 		}
-		vertex(entry, vc, wx, wy, wz, u, v, 255, 255, 255, 255);
+		// Vertex colour doubles as the brightness dial on the unlit path (albedo = texture * color in both
+		// packs) — see RTT_UNLIT_DIM. Full white on the normal lit path, as before.
+		int tint = RTT_UNLIT ? Math.round(255 * RTT_UNLIT_DIM) : 255;
+		vertex(entry, vc, wx, wy, wz, u, v, 255, tint, tint, tint);
 	}
 
 	/**

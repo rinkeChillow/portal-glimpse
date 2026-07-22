@@ -13,6 +13,8 @@
 	"portal-glimpse.config.shaderRenderMethod.tooltip": "How the glimpse draws while an Iris shaderpack is active (no effect without shaders). RTT renders it through the shader pipeline so it's lit/PBR'd like the world; Overlay draws it on top after the shaders (reliable, but not shader-lit).",
 	"portal-glimpse.config.shaderRenderMethod.rtt": "RTT (shader-lit)",
 	"portal-glimpse.config.shaderRenderMethod.overlay": "Overlay (on top)",
+	"portal-glimpse.config.godRayOccluder": "God-Ray Occluder",
+	"portal-glimpse.config.godRayOccluder.tooltip": "RTT only. Hides an invisible cage of solid blocks behind the glimpse so a shaderpack's sun shafts (god rays) stop there instead of shining through the portal. Turn off to see whether the rays pierce the glimpse on their own. Never replaces real blocks.",
 	"portal-glimpse.config.rttPrediction": "RTT Motion Prediction",
 	"portal-glimpse.config.rttPrediction.tooltip": "RTT only: how strongly the panorama predicts your camera motion to cancel the 1-frame lag on fast head movement. 100% = full prediction (smoothest when moving steadily); lower it if quick flicks overshoot or wobble.",
 	"portal-glimpse.config.panoramaFov": "Panorama Field of View",
