@@ -3,6 +3,7 @@ package com.rinke.portalglimpse.config;
 import com.mojang.blaze3d.systems.RenderSystem;
 
 import com.rinke.portalglimpse.PortalGlimpse;
+import com.rinke.portalglimpse.render.GlimpseSettings;
 import com.rinke.portalglimpse.render.IrisCompat;
 import com.rinke.portalglimpse.render.ShaderPackCalibration;
 import com.rinke.portalglimpse.render.ShaderRenderMethod;
@@ -43,7 +44,9 @@ public class UnsupportedShaderScreen extends Screen {
 	private static final float AVATAR_FADE_MS = 1500.0F;
 
 	private final Screen parent;
-	private final String packName;
+	/** Re-read every tick: Iris swaps packs without telling us, and this screen is what the player comes back to
+	 * from the shaderpack menu, so the name we opened with goes stale. See {@link #tick()}. */
+	private String packName;
 	private final boolean bslInstalled;
 	/** Set when the player asks to see the handle, so it (and the avatar) get rendered for copying. */
 	private boolean showHandle;
@@ -136,6 +139,31 @@ public class UnsupportedShaderScreen extends Screen {
 		config.apply();
 		config.save();
 		close();
+	}
+
+	/**
+	 * Keep the prompt honest about the pack that is actually loaded.
+	 *
+	 * <p>The renderer only raises this screen once per pack swap, and it skips the raise entirely while we're
+	 * already up — so nothing out there re-evaluates us. That matters because the main button hands the player
+	 * straight to Iris's shaderpack menu and Iris returns them <em>here</em> afterwards: without this, picking a
+	 * supported pack left them staring at a warning about a pack they'd just stopped using.
+	 *
+	 * <p>So: dismiss ourselves the moment there's nothing left to warn about (calibrated pack, shaders off, or
+	 * the player moved off the RTT method), and otherwise just re-label for whichever uncalibrated pack is now
+	 * loaded.
+	 */
+	@Override
+	public void tick() {
+		String current = ShaderPackCalibration.packName().orElse(null);
+		if (current == null
+				|| !IrisCompat.shadersActive()
+				|| GlimpseSettings.shaderRenderMethod != ShaderRenderMethod.RTT
+				|| ShaderPackCalibration.isCurrentPackSupported()) {
+			close();
+			return;
+		}
+		packName = current;
 	}
 
 	@Override

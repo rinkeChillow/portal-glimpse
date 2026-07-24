@@ -31,6 +31,7 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gl.Framebuffer;
 import net.minecraft.client.gl.SimpleFramebuffer;
 import net.minecraft.entity.Entity;
+import net.minecraft.state.property.Properties;
 import net.minecraft.client.gl.GlUniform;
 import net.minecraft.client.gl.ShaderProgram;
 import net.minecraft.client.render.BufferBuilder;
@@ -122,6 +123,13 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	private static final Map<UUID, Float> encasementMap = new HashMap<>();
 	/** Per-frame ease for the encasement fade-OUT when you leave (fade-in tracks the nausea directly). */
 	private static final float ENCASE_FADE_OUT = 0.35F;
+	/** Portal id -> current smoothed player-recede (blocks). {@code remoteReceedeFor} gives a raw, distance-based
+	 * TARGET each frame; we ease this toward it so the glimpse GLIDES into/out of the receded box instead of
+	 * snapping (or jittering on small position steps), the same way the camera approach feels smooth. Both
+	 * directions eased. Render-thread only. */
+	private static final Map<UUID, Float> remoteReceedeMap = new HashMap<>();
+	/** Per-frame lerp toward the recede target — lower = slower/smoother glide (≈0.3 s to settle at 60 fps). */
+	private static final float REMOTE_RECEDE_EASE = 0.15F;
 
 	/** Within this distance the parallax panorama renders on the portal (§4.2 close zone). */
 	private static final double PANORAMA_DISTANCE = 32.0;
@@ -153,6 +161,13 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	 * exactly on adjacent block faces (dirt top, obsidian faces) and z-fights them; 0.9 tucks the edges a
 	 * tenth of a block inside the frame so they're occluded/non-coplanar instead. */
 	private static final float BOX_MARGIN_RTT = 0.9F;
+	/** RTT ONLY: how far (blocks) the glimpse box recedes behind a portal a REMOTE player is standing in — an
+	 * absolute, player-relative recede (see {@code emitPanoramaBox} fixedRecede) that ignores our own eye, so a
+	 * watched player reads as standing inside the glimpse from any distance. Deliberately a touch deeper than the
+	 * camera's {@link #EYE_PUSH_RTT} (1.7) — the player wanted the watched-player glimpse to sit a full 2 blocks
+	 * back. Doubles as the range over which the recede EASES in as the player approaches (see remoteReceedeFor).
+	 * The occluder is skipped for these portals (no black blocks). */
+	private static final float REMOTE_RECEDE = 2.0F;
 	/** When a solid block sits in front of a portal's base (e.g. grass), the pushed box's downward margin
 	 * would clip through it. Instead lift that box's bottom to this height above the opening bottom
 	 * (~1.1 above the block's base) so it clears the block: no z-fight, no poke-through. */
@@ -367,6 +382,25 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			float rttPushAmount = playerInside ? 1.0F
 					: Math.max(0.0F, Math.min(1.0F, 1.0F - (float) Math.abs(rttEyeN - rttSurfaceN) / EYE_PUSH_RTT))
 							* rttOpeningGate(bounds, record.axis, cameraPos);
+			// RTT + shaders only: as a player whose BODY is drawn (any remote player, or ourselves in 2nd/3rd
+			// person) approaches/stands in this portal, recede the glimpse behind them by an absolute amount that
+			// EASES with their distance (independent of our own eye) so it slides back as they come closer and
+			// they read as standing inside it. rttPushAmount stays LOCAL, so the god-ray occluder (which reads it)
+			// is not dragged into a blackout box; buildOccluders also skips these portals. remoteReceedeFor
+			// decides WHO counts (it excludes the local player only in first person, where the camera owns them).
+			float remoteReceedeTarget = (GlimpseSettings.shaderRenderMethod == ShaderRenderMethod.RTT
+					&& GlimpseSettings.entityOverPanorama && IrisCompat.shadersActive())
+					? remoteReceedeFor(client, bounds, record.axis) : 0.0F;
+			// Ease the recede toward that target over a few frames so it glides in/out instead of snapping —
+			// smooths both the flat->box handoff and any small per-frame step in the player's position.
+			float remoteRecede = remoteReceedeMap.getOrDefault(record.id, 0.0F);
+			remoteRecede += (remoteReceedeTarget - remoteRecede) * REMOTE_RECEDE_EASE;
+			if (remoteRecede <= 0.001F && remoteReceedeTarget <= 0.0F) {
+				remoteRecede = 0.0F;
+				remoteReceedeMap.remove(record.id);
+			} else {
+				remoteReceedeMap.put(record.id, remoteRecede);
+			}
 			// Encasement: as the teleport swirl (nausea) builds while you stand in the portal, the destination
 			// panorama ALSO fades in on the OTHER side, wrapping around you until it fully encases you at the
 			// moment of teleport. Fade-IN tracks the swirl (nausea rises slowly); stepping out collapses the
@@ -470,7 +504,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				}
 				drawables.add(new Drawable(record, texture, present, bounds, glimpseAlpha, veilAlpha,
 						viewerOnFaceA, arrivalFade * distanceFade * departFade * relightFade,
-						pushAmount, rttPushAmount, pushSign, encasement));
+						pushAmount, rttPushAmount, pushSign, encasement, remoteRecede));
 			}
 		}
 
@@ -510,7 +544,36 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		boolean rttOccluders = shaders && GlimpseSettings.godRayOccluder
 				&& GlimpseSettings.shaderRenderMethod == ShaderRenderMethod.RTT
 				&& !GhostState.isActive();
-		TerrainOverride.syncPortal(client, rttOccluders ? buildOccluders(world, cameraPos, drawables) : Map.of());
+		Map<Long, BlockState> overrides = rttOccluders
+				? buildOccluders(world, cameraPos, drawables) : Map.of();
+
+		// TERRAIN VEIL (RTT + shaders): put the REAL nether-portal state back into the chunk mesh at the portal's
+		// own blocks, so the shaderpack sees an actual portal block and applies its portal rules — emission,
+		// bloom, the whole look it gives a vanilla portal. A quad can never get this: packs key those rules on
+		// the block id in `mc_Entity`, which only exists in the TERRAIN pass, so entity-layer geometry can at
+		// best pick which PROGRAM it lands in (the beacon-beam trick), never which BLOCK it claims to be.
+		//
+		// This costs nothing extra to draw: the blocks are hidden by GlimpseRenderState and TerrainOverride
+		// takes precedence over that hiding in the mesh hooks, so injecting the same state at the same
+		// positions simply un-hides them — through a per-frame channel we control. Being translucent terrain,
+		// the pack composites the swirl AFTER the deferred pass, i.e. over our panorama (which draws in the
+		// opaque gbuffer stage), which is the layering we want.
+		if (shaders && GlimpseSettings.shaderRenderMethod == ShaderRenderMethod.RTT
+				&& GlimpseSettings.rttVeilMode == RttVeilMode.TERRAIN && !GhostState.isActive()) {
+			Map<Long, BlockState> merged = new HashMap<>(overrides);
+			for (Drawable drawable : drawables) {
+				// Carry the portal's own axis — the default (X) would face a Z-axis portal's swirl edge-on,
+				// i.e. invisible from where the player actually stands.
+				BlockState veilState = Blocks.NETHER_PORTAL.getDefaultState()
+						.with(Properties.HORIZONTAL_AXIS, drawable.record().axis);
+				for (BlockPos pos : drawable.blocks()) {
+					// Last write wins over any occluder that landed here: the swirl belongs on the opening.
+					merged.put(pos.asLong(), veilState);
+				}
+			}
+			overrides = merged;
+		}
+		TerrainOverride.syncPortal(client, overrides);
 
 		if (drawables.isEmpty() && frameDebugDrawables == null) {
 			return;
@@ -674,7 +737,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 					axisX ? Direction.Axis.X : Direction.Axis.Z,
 					chosen.auto, chosen.manual, chosen.linkedId, chosen.createdAt, chosen.updatedAt);
 			out.add(new Drawable(rec, null, blocks, b, 255, 0, faceA, 1.0F, 0.0F, 0.0F,
-					faceA ? 1.0F : -1.0F, 0.0F));
+					faceA ? 1.0F : -1.0F, 0.0F, 0.0F));
 		}
 		return out;
 	}
@@ -852,7 +915,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		// Draw the FBO-textured portal quad (screen-space UVs) via a vanilla RenderType, so Iris patches it
 		// into its gbuffers and shades it. No FBO render / framebuffer juggling here — that happens
 		// post-composite (renderRttToFbo); doing it here corrupted Iris's target and voided the draw.
-		// (Veil intentionally omitted for now — testing the panorama quad on its own under shaders.)
+		// The veil follows in pass 2 below, gated on GlimpseSettings.rttVeil.
 		//
 		// The FBO is a SCREEN-SPACE image, so to lock the panorama to the portal each fragment must sample the
 		// FBO at its OWN current on-screen position — i.e. the UVs use THIS frame's transform (the one that
@@ -904,6 +967,28 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		}
 		if (immediate != null) {
 			immediate.draw();
+		}
+		// Pass 2: the VEIL — the living swirl, drawn over the panorama exactly as the vanilla and overlay paths
+		// do it (same atlas sprite, so resource packs and the animation come along for free). This was removed
+		// while the panorama quad was debugged on its own and never put back, which left the RTT path — the one
+		// actually in use under shaders — with no swirl at all.
+		//
+		// It goes through the ORDINARY translucent entity layer rather than the unlit beacon-beam routing the
+		// panorama uses: the panorama is a photo and must not be shaded, but the veil SHOULD be, because a
+		// shaderpack treating this bright quad as an emissive light is precisely what lit the obsidian frame.
+		// Whether that survives Iris's opaque gbuffer stage is the open question — see GlimpseSettings.rttVeil.
+		if (GlimpseSettings.rttVeilMode == RttVeilMode.QUAD) {
+			MinecraftClient client = MinecraftClient.getInstance();
+			Sprite portalSprite = client.getBlockRenderManager().getModels()
+					.getModelParticleSprite(Blocks.NETHER_PORTAL.getDefaultState());
+			SodiumCompat.markSpriteActive(portalSprite); // Sodium only ticks sprites it sees rendered
+			RenderLayer veilLayer = RenderLayer.getItemEntityTranslucentCull(portalSprite.getAtlasId());
+			for (Drawable drawable : drawables) {
+				emitVeil(entry, consumers.getBuffer(veilLayer), drawable, portalSprite);
+			}
+			if (immediate != null) {
+				immediate.draw();
+			}
 		}
 		matrices.pop();
 	}
@@ -976,7 +1061,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		// shared box logic the FBO uses (emitPanoramaBox — masking + block-in-front lift included) through a
 		// sink that tessellates each quad with screen-space UVs, converting the box's camera-relative corners
 		// back to world for emitRttVertex. Identical geometry to the FBO ⇒ exact 1:1 sampling, no leaks.
-		if (drawable.rttPushAmount() > 0.0F) {
+		if (drawable.rttPushAmount() > 0.0F || drawable.remoteRecede() > 0.0F) {
 			ClientWorld world = MinecraftClient.getInstance().world;
 			QuadSink sink = (ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz) -> emitRttTessQuad(entry, vc, cam, mvp,
 					new float[] {ax + (float) cam.x, ay + (float) cam.y, az + (float) cam.z},
@@ -984,7 +1069,18 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 					new float[] {cx + (float) cam.x, cy + (float) cam.y, cz + (float) cam.z},
 					new float[] {dx + (float) cam.x, dy + (float) cam.y, dz + (float) cam.z});
 			emitPanoramaBox(sink, b, axisX, faceA, cam, drawable.rttPushAmount(), drawable.pushSign(), world,
-					EYE_PUSH_RTT, BOX_MARGIN_RTT);
+					EYE_PUSH_RTT, BOX_MARGIN_RTT, drawable.remoteRecede());
+			// ENCASEMENT — the destination wrapping in from the OTHER side (opposite face, pushed the opposite
+			// way) as the teleport swirl builds, so it has closed around you by the moment of travel. The FBO
+			// already bakes this box (see renderPanoramas), but the sampling quad used to cover only the box in
+			// FRONT — so on the RTT path those encasement pixels had nothing to show through and the wrap-around
+			// was simply invisible. Mirrors the FBO's parameters one-for-one, because screen-space sampling is
+			// only 1:1 when both geometries agree exactly. Coverage is all this adds: the FBO's own alpha still
+			// owns the fade-in (a dither dissolve here, per the RTT fade split).
+			if (drawable.encasement() > 0.0F) {
+				emitPanoramaBox(sink, b, axisX, !faceA, cam, 1.0F, -drawable.pushSign(), world,
+						EYE_PUSH_RTT, BOX_MARGIN_RTT, 0.0F);
+			}
 			return;
 		}
 		// Not pushed: the flat opening plane, tessellated. Offset BEHIND the postcard by PANORAMA_OFFSET, exactly
@@ -1164,6 +1260,47 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	}
 
 	/**
+	 * The EASED player-relative recede for a portal: how far (blocks) the RTT glimpse should sit behind it for
+	 * the nearest REMOTE player approaching/standing in its opening. Ramps smoothly with the player's distance
+	 * to the plane — 0 beyond {@link #REMOTE_RECEDE} blocks, growing to the full {@link #REMOTE_RECEDE} as they
+	 * reach it — so the glimpse slides back as they come closer rather than snapping (the camera path eases the
+	 * same way off our own eye). Only players within the opening footprint count, so someone walking past to the
+	 * side doesn't move it. The nearest qualifying player wins.
+	 */
+	private static float remoteReceedeFor(MinecraftClient client, Bounds b, Direction.Axis axis) {
+		if (client.world == null) {
+			return 0.0F;
+		}
+		// In FIRST person the local player isn't drawn and the camera sits at their eye, so the camera system
+		// (rttPushAmount) owns them — skip them here. In 2nd/3rd person their BODY is drawn while the camera is
+		// offset, so the camera push no longer lines up with the body and clips it; there they must be treated
+		// like any other player and have the glimpse recede off their body, so we DO count them.
+		boolean localHandledByCamera = client.options.getPerspective().isFirstPerson();
+		boolean axisX = axis == Direction.Axis.X;
+		double surfaceN = axisX ? b.minZ() + 0.5 : b.minX() + 0.5; // plane along the normal
+		double latMin = axisX ? b.minX() : b.minZ();
+		double latMax = axisX ? (b.maxX() + 1) : (b.maxZ() + 1);
+		double yMin = b.minY();
+		double yMax = b.maxY() + 1;
+		float best = 0.0F;
+		for (var p : client.world.getPlayers()) {
+			if (p == client.player && localHandledByCamera) {
+				continue; // first person: the camera system (rttPushAmount) handles us, not this one
+			}
+			double lat = axisX ? p.getX() : p.getZ();
+			double footY = p.getY();
+			double headY = footY + p.getHeight();
+			if (lat < latMin - 0.5 || lat > latMax + 0.5 || headY < yMin - 0.5 || footY > yMax + 0.5) {
+				continue; // outside the opening silhouette — not "in" this portal
+			}
+			double normal = axisX ? p.getZ() : p.getX();
+			float ease = (float) Math.max(0.0, Math.min(1.0, 1.0 - Math.abs(normal - surfaceN) / REMOTE_RECEDE));
+			best = Math.max(best, ease);
+		}
+		return best * REMOTE_RECEDE;
+	}
+
+	/**
 	 * Draws the cubemap panorama on each nearby portal via the {@code portal_panorama} shader. Each
 	 * fragment's view ray (its camera-relative position) selects and samples one of the six faces,
 	 * so the view shifts with real perspective as the player moves.
@@ -1215,6 +1352,13 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		GlUniform dither = shader.getUniform("DitherFade");
 		if (dither != null) {
 			dither.set(ditherFade ? 1.0F : 0.0F); // RTT dissolves the fade; blended paths use smooth alpha
+		}
+		// Gamma pre-compensation is only meaningful when a shaderpack is going to run its own curve over this
+		// texture, i.e. the RTT path (ditherFade doubles as that signal, as it does for the box constants).
+		// The overlay and non-shader paths composite the panorama as-is and must stay untouched at 1.0.
+		GlUniform gamma = shader.getUniform("RttGamma");
+		if (gamma != null) {
+			gamma.set(ditherFade ? ShaderPackCalibration.currentOrFallback().gamma() : 1.0F);
 		}
 
 		for (PanoDraw pano : panos) {
@@ -1272,9 +1416,10 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			// RTT uses the proximity-EASED push so the box slides out smoothly; overlay/vanilla use the binary
 			// one. Both the FBO box (here) and the sampling quad (emitRttQuad) must read the same value.
 			float push = ditherFade ? pano.drawable().rttPushAmount() : pano.drawable().pushAmount();
-			if (push > 0.0F) {
+			float remoteRecede = ditherFade ? pano.drawable().remoteRecede() : 0.0F;
+			if (push > 0.0F || remoteRecede > 0.0F) {
 				emitPanoramaBox(bufferSink(buffer), b, axisX, faceA, cameraPos, push,
-						pano.drawable().pushSign(), client.world, eyePush, boxMargin);
+						pano.drawable().pushSign(), client.world, eyePush, boxMargin, remoteRecede);
 			} else {
 				for (BlockPos pos : pano.drawable().blocks()) {
 					emitPanoramaQuad(buffer, pos, axisX, faceA, cameraPos, push,
@@ -1294,7 +1439,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				BufferBuilder encBuffer = Tessellator.getInstance()
 						.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION);
 				emitPanoramaBox(bufferSink(encBuffer), b, axisX, !faceA, cameraPos, 1.0F, -pano.drawable().pushSign(),
-						client.world, eyePush, boxMargin);
+						client.world, eyePush, boxMargin, 0.0F);
 				BuiltBuffer encBuilt = encBuffer.endNullable();
 				if (encBuilt != null) {
 					BufferRenderer.drawWithGlobalProgram(encBuilt);
@@ -1488,6 +1633,12 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			if (d.glimpseFade() < OCCLUDER_FADE_MIN) {
 				continue;
 			}
+			// A portal receded behind a REMOTE player we're watching gets no occluder: we're not entering it, so
+			// there are no god rays to shield, and an occluder placed at our own (shallow) depth would sit in
+			// front of the deep player-relative recede and black it out. This is why no black blocks appear.
+			if (d.remoteRecede() > 0.0F) {
+				continue;
+			}
 			Bounds b = d.bounds();
 			boolean axisX = d.record().axis == Direction.Axis.X;
 			float push = d.rttPushAmount();
@@ -1556,12 +1707,18 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	 */
 
 	private static void emitPanoramaBox(QuadSink sink, Bounds b, boolean axisX, boolean faceA,
-			Vec3d cam, float pushAmount, float pushSign, ClientWorld world, float eyePush, float m) {
+			Vec3d cam, float pushAmount, float pushSign, ClientWorld world, float eyePush, float m,
+			float fixedRecede) {
 		float back = faceA ? PANORAMA_OFFSET : -PANORAMA_OFFSET;
 		if (axisX) {
 			float surface = (float) ((faceA ? b.minZ() + PLANE_LOW : b.minZ() + PLANE_HIGH) + back - cam.z);
+			// Normally the box recedes only as far as the ratchet keeps it clear of THE CAMERA's eye. A
+			// fixedRecede overrides that with an absolute recede toward the destination — used when a REMOTE
+			// player stands in the portal: the glimpse must fall back behind THEM, not behind our eye, so a
+			// watched player reads as standing inside the recess no matter how far away we are.
 			float ratchet = Math.max(surface * pushSign, eyePush) * pushSign;
-			float pushed = surface + (ratchet - surface) * pushAmount;
+			float pushed = fixedRecede > 0.0F ? surface + fixedRecede * pushSign
+					: surface + (ratchet - surface) * pushAmount;
 			int frontZ = pushSign > 0.0F ? b.maxZ() + 1 : b.minZ() - 1; // one block out on the destination side
 			boolean oBottom = sideObstructed(world, 1, b.minY() - 1, 2, frontZ, 0, b.minX(), b.maxX());
 			boolean oTop = sideObstructed(world, 1, b.maxY() + 1, 2, frontZ, 0, b.minX(), b.maxX());
@@ -1582,7 +1739,8 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		} else {
 			float surface = (float) ((faceA ? b.minX() + PLANE_LOW : b.minX() + PLANE_HIGH) + back - cam.x);
 			float ratchet = Math.max(surface * pushSign, eyePush) * pushSign;
-			float pushed = surface + (ratchet - surface) * pushAmount;
+			float pushed = fixedRecede > 0.0F ? surface + fixedRecede * pushSign
+					: surface + (ratchet - surface) * pushAmount;
 			int frontX = pushSign > 0.0F ? b.maxX() + 1 : b.minX() - 1;
 			boolean oBottom = sideObstructed(world, 1, b.minY() - 1, 0, frontX, 2, b.minZ(), b.maxZ());
 			boolean oTop = sideObstructed(world, 1, b.maxY() + 1, 0, frontX, 2, b.minZ(), b.maxZ());
@@ -1671,7 +1829,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	private record Drawable(PortalRecord record, GlimpseTextures.GlimpseTexture texture,
 			List<BlockPos> blocks, Bounds bounds, int glimpseAlpha, int veilAlpha,
 			boolean viewerOnFaceA, float glimpseFade, float pushAmount, float rttPushAmount, float pushSign,
-			float encasement) {
+			float encasement, float remoteRecede) {
 	}
 
 	private static void emitGlimpse(MatrixStack.Entry entry, VertexConsumerProvider consumers,

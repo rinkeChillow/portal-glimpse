@@ -13,6 +13,12 @@ uniform float GlimpseAlpha;
 // 1 = screen-door DISSOLVE (RTT path: an opaque gbuffer can't blend alpha, so fade by discarding an ordered
 // fraction of pixels); 0 = smooth alpha (the blended overlay / non-shader paths, unchanged).
 uniform float DitherFade;
+// Per-shaderpack GAMMA PRE-COMPENSATION for the RTT path (1.0 = off, i.e. every non-RTT path and any pack
+// whose unlit pass is near-linear). Some packs run our texture through a CURVE in gbuffers_beaconbeam rather
+// than a gain — Complementary Reimagined and Rethinking Voxels do `c * c * 4.0`, which crushes dark scenes to
+// black and burns bright ones. A vertex-colour dim can only scale, never straighten a curve, so we bend the
+// texture the opposite way here first: feeding pow(c, 0.5) into a squaring pass comes back out linear.
+uniform float RttGamma;
 
 // Interior-mapping parameters (design doc §4.1): the panorama is treated as a sphere of radius
 // SphereRadius centered at PortalCenter (both camera-relative). We intersect the view ray with
@@ -77,6 +83,12 @@ void main() {
 	float t = b + sqrt(disc);
 	vec3 dir = t * rayFromEye - PortalCenter;
 	vec3 col = sampleCube(dir).rgb;
+
+	// Pre-bend for the pack's own curve (see RttGamma). Exactly 1.0 short-circuits so the common path — and
+	// every non-RTT path — is bit-for-bit what it was before this existed.
+	if (RttGamma != 1.0) {
+		col = pow(max(col, vec3(0.0)), vec3(RttGamma));
+	}
 
 	if (DitherFade > 0.5) {
 		// RTT: dissolve — keep a GlimpseAlpha fraction of pixels, discard the rest (opaque, alpha = 1).

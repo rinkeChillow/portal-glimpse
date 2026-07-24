@@ -23,8 +23,10 @@ import net.minecraft.util.Identifier;
  * {@code /pgdebug} toggle ({@link GlimpseSettings#debugMode}), off by default:
  * Numpad 9/6 veil ±, Numpad 8/2 FOV ±, H glimpses, J postcard fade, K debug cubemap, Numpad 0
  * block-travel, Numpad 1 ghost-freeze (hide+clone the nearest portal with no capture, for testing the
- * block-hiding under other renderers like Sodium). (The Numpad-5 loading-screen hold is polled
- * separately in {@code PortalTransitionView}.)
+ * block-hiding under other renderers like Sodium), Numpad 3 RTT FBO blit, and the shaderpack calibration
+ * dials — Numpad 7/4 brightness ±, Page Up/Down gamma ±, Numpad . to copy the finished table line — and
+ * Numpad * to toggle the RTT veil. (The
+ * Numpad-5 loading-screen hold is polled separately in {@code PortalTransitionView}.)
  */
 public final class GlimpseKeybinds {
 
@@ -40,14 +42,28 @@ public final class GlimpseKeybinds {
 	private static final int KEY_BLOCK_TRAVEL = GLFW.GLFW_KEY_KP_0;
 	private static final int KEY_GHOST_FREEZE = GLFW.GLFW_KEY_KP_1;
 	private static final int KEY_RTT_BLIT = GLFW.GLFW_KEY_KP_3;
+	private static final int KEY_DIM_UP = GLFW.GLFW_KEY_KP_7;
+	private static final int KEY_DIM_DOWN = GLFW.GLFW_KEY_KP_4;
+	private static final int KEY_GAMMA_UP = GLFW.GLFW_KEY_PAGE_UP;
+	private static final int KEY_GAMMA_DOWN = GLFW.GLFW_KEY_PAGE_DOWN;
+	private static final int KEY_CALIBRATION_REPORT = GLFW.GLFW_KEY_KP_DECIMAL;
+	private static final int KEY_RTT_VEIL = GLFW.GLFW_KEY_KP_MULTIPLY;
+
+	/** How far one press moves each calibration dial. Brightness is a linear gain so it wants a fine step;
+	 * gamma is an exponent where small moves are already very visible. */
+	private static final float DIM_STEP = 0.02F;
+	private static final float GAMMA_STEP = 0.05F;
 
 	private static final int[] KEYS = {
 			KEY_VEIL_UP, KEY_VEIL_DOWN, KEY_TOGGLE_GLIMPSES, KEY_TOGGLE_FADE,
 			KEY_FOV_UP, KEY_FOV_DOWN, KEY_DEBUG_PANORAMA, KEY_BLOCK_TRAVEL, KEY_GHOST_FREEZE,
-			KEY_RTT_BLIT
+			KEY_RTT_BLIT, KEY_DIM_UP, KEY_DIM_DOWN, KEY_GAMMA_UP, KEY_GAMMA_DOWN,
+			KEY_CALIBRATION_REPORT, KEY_RTT_VEIL
 	};
 	/** Previous frame's down-state per key, for rising-edge detection. */
 	private static final boolean[] WAS_DOWN = new boolean[KEYS.length];
+	/** Last entity-mask decision we printed, so the diagnostic only fires on change (see onTick). */
+	private static String lastMaskDecision = "";
 
 	private GlimpseKeybinds() {
 	}
@@ -135,10 +151,74 @@ public final class GlimpseKeybinds {
 					? "RTT FBO blit ON — offscreen panorama buffer shown full-screen"
 					: "RTT FBO blit OFF");
 		}
+		boolean calibrationChanged = false;
+		if (justPressed[10]) {
+			ShaderPackCalibration.nudgeDim(DIM_STEP);
+			calibrationChanged = true;
+		}
+		if (justPressed[11]) {
+			ShaderPackCalibration.nudgeDim(-DIM_STEP);
+			calibrationChanged = true;
+		}
+		if (justPressed[12]) {
+			ShaderPackCalibration.nudgeGamma(GAMMA_STEP);
+			calibrationChanged = true;
+		}
+		if (justPressed[13]) {
+			ShaderPackCalibration.nudgeGamma(-GAMMA_STEP);
+			calibrationChanged = true;
+		}
+		if (calibrationChanged) {
+			reportCalibration(client, false);
+		}
+		if (justPressed[14]) {
+			reportCalibration(client, true);
+		}
+		if (justPressed[15]) {
+			GlimpseSettings.rttVeilMode = GlimpseSettings.rttVeilMode.next();
+			actionbar(client, "RTT veil: " + GlimpseSettings.rttVeilMode.label());
+		}
+		// TEMP DIAGNOSTIC: surface why the entity-over-panorama (PortalEntityMask) did or didn't engage for a
+		// player near a captured portal — printed only when the decision changes, so it's not spam.
+		if (!PortalEntityMask.debugDecision.equals(lastMaskDecision)) {
+			lastMaskDecision = PortalEntityMask.debugDecision;
+			actionbar(client, "EntityMask: " + lastMaskDecision);
+		}
 		// While travel is blocked, keep the client's portal-nausea wobble pinned at zero.
 		if (GlimpseSettings.debugBlockPortalTravel && client.player != null) {
 			client.player.nauseaIntensity = 0.0F;
 			client.player.prevNauseaIntensity = 0.0F;
+		}
+	}
+
+	/**
+	 * Show where the two RTT calibration dials currently sit for the loaded shaderpack.
+	 *
+	 * <p>Calibrating means LOOKING at the portal, so these numbers can't be derived from a pack's source — they
+	 * get dialled in-game and then baked into {@link ShaderPackCalibration}'s table. On a nudge this is just an
+	 * action-bar readout; on an explicit press ({@code full}) it also drops the finished table line into chat
+	 * and onto the clipboard, so a tuning session ends with something ready to paste rather than two floats to
+	 * transcribe by eye.
+	 */
+	private static void reportCalibration(MinecraftClient client, boolean full) {
+		if (!ShaderPackCalibration.isTuning()) {
+			actionbar(client, ShaderPackCalibration.packName().isPresent()
+					? "Calibration: no live tuning yet — Numpad 7/4 brightness, Page Up/Down gamma"
+					: "Calibration: no shaderpack loaded");
+			return;
+		}
+		ShaderPackCalibration.Calibration c = ShaderPackCalibration.currentOrFallback();
+		actionbar(client, String.format("RTT calibration — brightness %.2f, gamma %.2f  (%s)",
+				c.unlitDim(), c.gamma(), ShaderPackCalibration.packName().orElse("?")));
+		if (!full) {
+			return;
+		}
+		String line = ShaderPackCalibration.tuningTableLine();
+		client.keyboard.setClipboard(line);
+		if (client.player != null) {
+			client.player.sendMessage(Text.literal("[Portal Glimpse] copied to clipboard:")
+					.formatted(Formatting.LIGHT_PURPLE), false);
+			client.player.sendMessage(Text.literal(line).formatted(Formatting.AQUA), false);
 		}
 	}
 

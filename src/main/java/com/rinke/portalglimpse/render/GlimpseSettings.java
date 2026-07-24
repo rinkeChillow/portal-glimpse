@@ -49,6 +49,11 @@ public final class GlimpseSettings {
 	 * the cage may be redundant). See {@code VanillaGlimpseRenderer#buildOccluders}. */
 	public static boolean godRayOccluder = true;
 
+	/** RTT + shaders only: how the veil (the living portal swirl) is drawn over the RTT panorama — see
+	 * {@link RttVeilMode} for what each mode trades away. Cycled live with Numpad * so the two can be compared
+	 * side by side in the same portal. */
+	public static RttVeilMode rttVeilMode = RttVeilMode.TERRAIN;
+
 	/** Half field-of-view (degrees) the portal shows of the destination panorama (§4.1). The sphere
 	 * radius is derived per-frame so the destination scales with the portal (no telephoto) as you move.
 	 * Higher = wider view / smaller content, and brings the scaling's onset closer (critical distance

@@ -23,6 +23,7 @@
 		{ "name": "GlimpseAlpha", "type": "float", "count": 1, "values": [ 1.0 ] },
 		{ "name": "PortalCenter", "type": "float", "count": 3, "values": [ 0.0, 0.0, 0.0 ] },
 		{ "name": "SphereRadius", "type": "float", "count": 1, "values": [ 8.0 ] },
-		{ "name": "DitherFade", "type": "float", "count": 1, "values": [ 0.0 ] }
+		{ "name": "DitherFade", "type": "float", "count": 1, "values": [ 0.0 ] },
+		{ "name": "RttGamma", "type": "float", "count": 1, "values": [ 1.0 ] }
 	]
 }

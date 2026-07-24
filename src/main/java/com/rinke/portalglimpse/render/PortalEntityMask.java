@@ -46,6 +46,12 @@ public final class PortalEntityMask {
 
 	private static final List<NearPlayer> collected = new ArrayList<>();
 
+	/** TEMP DIAGNOSTIC (behind /pgdebug): the last decision {@link #shouldDefer} reached for a player that was
+	 * near a captured, in-dimension portal — "DEFERRED" or the specific check that rejected them. Printed on
+	 * change by {@code GlimpseKeybinds}. Lets us see WHY the entity-over-panorama isn't engaging without a
+	 * debugger. Only written while {@link GlimpseSettings#debugMode} is on. */
+	public static volatile String debugDecision = "(no player evaluated near a captured portal yet)";
+
 	private PortalEntityMask() {
 	}
 
@@ -56,6 +62,14 @@ public final class PortalEntityMask {
 	 */
 	public static boolean shouldDefer(PlayerEntity player) {
 		if (!GlimpseSettings.glimpsesVisible || !GlimpseSettings.entityOverPanorama) {
+			return false;
+		}
+		// Deferring is a VANILLA-only feature. Under a shaderpack we do NOT defer: every attempt to show the
+		// player over the glimpse fought Iris's deferred pipeline (a re-render at AFTER_ENTITIES came out
+		// semi-transparent; pushing the panorama behind the player dragged in the god-ray occluder as a blackout
+		// box). So under shaders the player renders NORMALLY and is simply clipped by the glimpse plane, like a
+		// vanilla portal — an accepted limitation. Only the no-shader path gets the clean player-over-panorama.
+		if (IrisCompat.shadersActive()) {
 			return false;
 		}
 		PortalStore store = PortalDetection.store();
@@ -71,11 +85,16 @@ public final class PortalEntityMask {
 		double footY = player.getY();
 		double headY = footY + player.getHeight();
 
+		boolean debug = GlimpseSettings.debugMode;
+		String name = debug ? player.getName().getString() : null;
+		int capturedInDim = 0; // captured, in-dimension portals we found at all (regardless of range)
+
 		for (PortalRecord record : store.all()) {
 			boolean hasCapture = record.auto.hasCapture || (record.manual.hasCapture && record.manual.pinned);
 			if (!hasCapture || !record.dimension.equals(dimension)) {
 				continue;
 			}
+			capturedInDim++;
 
 			int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
 			int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
@@ -101,6 +120,10 @@ public final class PortalEntityMask {
 			double planeCoord = axisX ? (minZ + 0.5) : (minX + 0.5);
 			double entPerp = axisX ? ez : ex;
 			if (Math.abs(entPerp - planeCoord) > BAND) {
+				if (debug) {
+					debugDecision = String.format("%s: NOT deferred — off-plane |%.2f-%.2f|=%.2f > BAND %.1f",
+							name, entPerp, planeCoord, Math.abs(entPerp - planeCoord), BAND);
+				}
 				continue;
 			}
 
@@ -110,14 +133,29 @@ public final class PortalEntityMask {
 			double latMax = axisX ? (maxX + 1) : (maxZ + 1);
 			double entLat = axisX ? ex : ez;
 			if (entLat < latMin - PAD || entLat > latMax + PAD) {
+				if (debug) {
+					debugDecision = String.format("%s: NOT deferred — outside width (lat %.2f not in [%.1f,%.1f])",
+							name, entLat, latMin - PAD, latMax + PAD);
+				}
 				continue;
 			}
 			if (headY < minY - PAD || footY > maxY + 1 + PAD) {
+				if (debug) {
+					debugDecision = String.format("%s: NOT deferred — outside height (foot %.2f head %.2f vs [%d,%d])",
+							name, footY, headY, minY, maxY + 1);
+				}
 				continue;
 			}
 
 			collected.add(new NearPlayer(player, record.id));
+			if (debug) {
+				debugDecision = name + ": DEFERRED (re-rendered over the panorama)";
+			}
 			return true;
+		}
+		if (debug && capturedInDim == 0) {
+			debugDecision = (name != null ? name : "player")
+					+ ": NOT deferred — the observer has NO captured portal in this dimension (hasCapture=false)";
 		}
 		return false;
 	}
