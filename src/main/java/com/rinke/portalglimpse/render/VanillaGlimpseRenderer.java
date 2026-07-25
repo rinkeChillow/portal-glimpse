@@ -665,7 +665,8 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		// Under an Iris shaderpack our custom-shader panorama can't render in this deferred pass (Iris
 		// owns the fragment stage). Stash it and bail — renderAfterShaders draws the panorama AND veil as
 		// a post-composite overlay instead. The block-hiding above already ran, so the vanilla swirl is
-		// gone. (The postcard crossfade is skipped under shaders — the panorama is the glimpse there.)
+		// gone. Both shader paths draw the postcard too (RTT via emitRttPostcard, overlay via
+		// drawShaderPostcards) — it's the baseline glimpse whenever a portal has no panorama that frame.
 		if (shaders) {
 			if (GlimpseSettings.shaderRenderMethod == ShaderRenderMethod.RTT) {
 				// RTT: the FBO is rendered post-composite (renderAfterShaders) and drawn onto the portal
@@ -863,11 +864,41 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		RenderSystem.applyModelViewMatrix();
 
 		renderPanoramas(IDENTITY, store, cam, panos, false); // view already on the stack; identity world-pose
-		drawShaderVeil(client, cam, panos);           // our custom swirl, over the panorama
+		drawShaderPostcards(client, cam, panos);      // the flat postcard, over the panorama (the shader floor)
+		drawShaderVeil(client, cam, panos);           // our custom swirl, over both
 
 		modelView.popMatrix();
 		RenderSystem.applyModelViewMatrix();
 		RenderSystem.restoreProjectionMatrix();
+	}
+
+	/**
+	 * Draws the flat postcard in the Iris overlay pass — the "postcard floor" the shader path was missing.
+	 *
+	 * <p>The overlay path used to draw the panorama and the veil and nothing else, so any portal without a
+	 * panorama that frame rendered NO glimpse at all: just the swirl over a hidden portal block. That is the
+	 * common case, not a corner case — {@link #PANORAMA_DISTANCE} caps the panorama at 32 blocks while
+	 * portals keep rendering out to {@link #entityRenderDistance}, and nearest-N caps it further. The RTT
+	 * path has covered this since {@code emitRttPostcard}; this brings the overlay in line.
+	 *
+	 * <p>Reuses {@link #emitGlimpse} outright rather than an overlay-specific variant: this draw lands
+	 * POST-composite, where Iris is finished and nothing will shade it, so the plain
+	 * {@code getItemEntityTranslucentCull} routing the vanilla path uses is already correct here. (The RTT
+	 * path needs its own emitter only because its geometry goes through Iris's gbuffers and has to take the
+	 * unlit beacon-beam routing to match the panorama.) That reuse also means the alpha rule comes along for
+	 * free: a portal WITH a panorama gets the proximity crossfade, one WITHOUT gets the opaque
+	 * {@code postcardAlphaNoFade} floor.
+	 */
+	private static void drawShaderPostcards(MinecraftClient client, Vec3d cameraPos,
+			List<Drawable> drawables) {
+		VertexConsumerProvider.Immediate immediate = client.getBufferBuilders().getEntityVertexConsumers();
+		MatrixStack matrices = new MatrixStack();
+		matrices.translate(-cameraPos.x, -cameraPos.y, -cameraPos.z);
+		MatrixStack.Entry entry = matrices.peek();
+		for (Drawable drawable : drawables) {
+			emitGlimpse(entry, immediate, drawable);
+		}
+		immediate.draw(); // flush before the veil buffers so the swirl composites over the postcard
 	}
 
 	/**
