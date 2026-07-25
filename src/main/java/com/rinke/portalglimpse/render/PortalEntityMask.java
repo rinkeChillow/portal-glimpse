@@ -11,7 +11,6 @@ import com.rinke.portalglimpse.detect.PortalDetection;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.Identifier;
-import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 
@@ -96,16 +95,10 @@ public final class PortalEntityMask {
 			}
 			capturedInDim++;
 
-			int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
-			int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
-			for (BlockPos pos : record.interior) {
-				minX = Math.min(minX, pos.getX());
-				maxX = Math.max(maxX, pos.getX());
-				minY = Math.min(minY, pos.getY());
-				maxY = Math.max(maxY, pos.getY());
-				minZ = Math.min(minZ, pos.getZ());
-				maxZ = Math.max(maxZ, pos.getZ());
-			}
+			// Cached on the record (its interior never changes), so this no longer re-walks the block list for
+			// every player every frame — the reason this loop was a hot spot.
+			int[] bb = record.interiorBounds();
+			int minX = bb[0], minY = bb[1], minZ = bb[2], maxX = bb[3], maxY = bb[4], maxZ = bb[5];
 
 			// Only when the camera is close enough that the panorama is actually rendering.
 			double cx = (minX + maxX + 1) / 2.0;

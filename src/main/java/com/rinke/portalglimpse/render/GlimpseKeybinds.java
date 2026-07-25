@@ -25,7 +25,8 @@ import net.minecraft.util.Identifier;
  * block-travel, Numpad 1 ghost-freeze (hide+clone the nearest portal with no capture, for testing the
  * block-hiding under other renderers like Sodium), Numpad 3 RTT FBO blit, and the shaderpack calibration
  * dials — Numpad 7/4 brightness ±, Page Up/Down gamma ±, Numpad . to copy the finished table line — and
- * Numpad * to toggle the RTT veil. (The
+ * Numpad * to toggle the RTT veil, Numpad / to cycle the debug cull cone (frustum-cull test), and Numpad
+ * Enter to cycle the nearest-N panorama cap. (The
  * Numpad-5 loading-screen hold is polled separately in {@code PortalTransitionView}.)
  */
 public final class GlimpseKeybinds {
@@ -48,6 +49,8 @@ public final class GlimpseKeybinds {
 	private static final int KEY_GAMMA_DOWN = GLFW.GLFW_KEY_PAGE_DOWN;
 	private static final int KEY_CALIBRATION_REPORT = GLFW.GLFW_KEY_KP_DECIMAL;
 	private static final int KEY_RTT_VEIL = GLFW.GLFW_KEY_KP_MULTIPLY;
+	private static final int KEY_CULL_FOV = GLFW.GLFW_KEY_KP_DIVIDE;
+	private static final int KEY_NEAREST_N = GLFW.GLFW_KEY_KP_ENTER;
 
 	/** How far one press moves each calibration dial. Brightness is a linear gain so it wants a fine step;
 	 * gamma is an exponent where small moves are already very visible. */
@@ -58,7 +61,7 @@ public final class GlimpseKeybinds {
 			KEY_VEIL_UP, KEY_VEIL_DOWN, KEY_TOGGLE_GLIMPSES, KEY_TOGGLE_FADE,
 			KEY_FOV_UP, KEY_FOV_DOWN, KEY_DEBUG_PANORAMA, KEY_BLOCK_TRAVEL, KEY_GHOST_FREEZE,
 			KEY_RTT_BLIT, KEY_DIM_UP, KEY_DIM_DOWN, KEY_GAMMA_UP, KEY_GAMMA_DOWN,
-			KEY_CALIBRATION_REPORT, KEY_RTT_VEIL
+			KEY_CALIBRATION_REPORT, KEY_RTT_VEIL, KEY_CULL_FOV, KEY_NEAREST_N
 	};
 	/** Previous frame's down-state per key, for rising-edge detection. */
 	private static final boolean[] WAS_DOWN = new boolean[KEYS.length];
@@ -177,6 +180,25 @@ public final class GlimpseKeybinds {
 		if (justPressed[15]) {
 			GlimpseSettings.rttVeilMode = GlimpseSettings.rttVeilMode.next();
 			actionbar(client, "RTT veil: " + GlimpseSettings.rttVeilMode.label());
+		}
+		if (justPressed[16]) {
+			// Cycle the debug cull cone: OFF -> 60 -> 40 -> 25 -> OFF. Portals outside it are culled while still
+			// on-screen, so you can watch the frustum cull as you turn/move (the real view FOV is untouched).
+			float f = GlimpseSettings.debugCullFovDegrees;
+			f = f <= 0.0F ? 60.0F : (f > 50.0F ? 40.0F : (f > 30.0F ? 25.0F : 0.0F));
+			GlimpseSettings.debugCullFovDegrees = f;
+			actionbar(client, f <= 0.0F
+					? "Debug cull cone OFF — culling against the real view frustum"
+					: String.format("Debug cull cone: %.0f° — portals outside it cull while still on-screen", f));
+		}
+		if (justPressed[17]) {
+			// Cycle the nearest-N panorama cap: 6 -> 4 -> 2 -> 1 -> 6. Dial it down to watch the further portals
+			// fall back from the parallax panorama to the flat postcard.
+			int n = GlimpseSettings.maxPanoramas;
+			n = n > 4 ? 4 : (n > 2 ? 2 : (n > 1 ? 1 : 6));
+			GlimpseSettings.maxPanoramas = n;
+			actionbar(client, "Nearest-N panorama cap: " + n
+					+ " (closest " + n + " render the parallax panorama; the rest show the postcard)");
 		}
 		// TEMP DIAGNOSTIC: surface why the entity-over-panorama (PortalEntityMask) did or didn't engage for a
 		// player near a captured portal — printed only when the decision changes, so it's not spam.

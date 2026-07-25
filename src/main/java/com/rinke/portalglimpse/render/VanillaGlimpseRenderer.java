@@ -1,6 +1,7 @@
 package com.rinke.portalglimpse.render;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -37,6 +38,7 @@ import net.minecraft.client.gl.ShaderProgram;
 import net.minecraft.client.render.BufferBuilder;
 import net.minecraft.client.render.BufferRenderer;
 import net.minecraft.client.render.BuiltBuffer;
+import net.minecraft.client.render.Frustum;
 import net.minecraft.client.render.GameRenderer;
 import net.minecraft.client.render.LightmapTextureManager;
 import net.minecraft.client.render.OverlayTexture;
@@ -238,6 +240,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	public void renderWorld(WorldRenderContext context) {
 		deferredPanos = null; // reset the shader stashes each frame (set below only under shaders)
 		rttDrawables = null;
+		panoramaSet = java.util.Collections.emptySet(); // recomputed after the frustum cull below
 		PortalStore store = PortalDetection.store();
 		ClientWorld world = context.world();
 		if (store == null || world == null) {
@@ -278,7 +281,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				continue;
 			}
 
-			Bounds bounds = Bounds.of(record.interior);
+			Bounds bounds = Bounds.of(record);
 
 			// Distance visibility + fade, matching vanilla ENTITY render distance (which scales with
 			// the object's size — a big portal shows from further, like a big entity). Fade the glimpse
@@ -447,6 +450,16 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			int glimpseAlpha = GlimpseSettings.glimpsesVisible
 					? Math.round(GLIMPSE_ALPHA * fade * arrivalFade * distanceFade * departFade)
 					: 0;
+			// The postcard alpha for a portal with NO panorama behind it (nearest-N-capped, or past PANORAMA_
+			// DISTANCE). Two differences from glimpseAlpha: (1) no proximity crossfade — there's no panorama to
+			// reveal, so it must not fade out up close; (2) FULLY OPAQUE (255, not the 235 GLIMPSE_ALPHA). The
+			// 235 leaves a deliberate ~8% gap that the panorama normally fills; with nothing behind it, that gap
+			// shows the real world THROUGH the portal (the "transparent billboard" bug). Opaque makes the
+			// postcard self-sufficient, and alpha≥250 also routes it to the depth-writing layer so it occludes
+			// like the panorama would. The other fades (arrival/distance/depart) still apply.
+			int postcardAlphaNoFade = GlimpseSettings.glimpsesVisible
+					? Math.round(255.0F * arrivalFade * distanceFade * departFade)
+					: 0;
 			int veilAlpha = GlimpseSettings.veilAlphaForStandingIn(dimension);
 
 			GlimpseTextures.GlimpseTexture texture = GlimpseTextures.get(client, store.baseDir(), record);
@@ -502,8 +515,8 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				for (BlockPos pos : present) {
 					hiddenPositions.add(pos.asLong());
 				}
-				drawables.add(new Drawable(record, texture, present, bounds, glimpseAlpha, veilAlpha,
-						viewerOnFaceA, arrivalFade * distanceFade * departFade * relightFade,
+				drawables.add(new Drawable(record, texture, present, bounds, glimpseAlpha, postcardAlphaNoFade,
+						veilAlpha, viewerOnFaceA, arrivalFade * distanceFade * departFade * relightFade,
 						pushAmount, rttPushAmount, pushSign, encasement, remoteRecede));
 			}
 		}
@@ -575,8 +588,78 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		}
 		TerrainOverride.syncPortal(client, overrides);
 
+		// FRUSTUM CULL — for the DRAWING only. Everything above (block-hiding via hiddenPositions, the god-ray
+		// occluders, the terrain veil) deliberately used the FULL in-range set: those drive chunk-mesh state, and
+		// culling them by view would un-hide / re-inject portal blocks the instant you turned away, flapping chunk
+		// re-meshes every frame. Here we drop portals outside the view frustum from the actual panorama/veil draw
+		// + RTT tessellation (the expensive part) — a portal behind you no longer renders. Box padded a couple of
+		// blocks so the receded glimpse box / veil offset near a screen edge doesn't pop.
+		Frustum frustum = context.frustum();
+		// DEBUG (Numpad /): an optional SHRUNKEN cull cone, decoupled from the real view — portals outside this
+		// narrow angle are culled while still on your normal-FOV screen, so the frustum cull is observable.
+		float debugCullFov = GlimpseSettings.debugCullFovDegrees;
+		double debugCosHalf = debugCullFov > 0.0F ? Math.cos(Math.toRadians(debugCullFov / 2.0)) : -2.0;
+		double lookX = 0, lookY = 0, lookZ = 0;
+		if (debugCullFov > 0.0F) {
+			double yawR = Math.toRadians(context.camera().getYaw());
+			double pitchR = Math.toRadians(context.camera().getPitch());
+			lookX = -Math.sin(yawR) * Math.cos(pitchR);
+			lookY = -Math.sin(pitchR);
+			lookZ = Math.cos(yawR) * Math.cos(pitchR);
+		}
+		if (frustum != null || debugCullFov > 0.0F) {
+			List<Drawable> visible = new ArrayList<>(drawables.size());
+			for (Drawable d : drawables) {
+				Bounds bb = d.bounds();
+				boolean vis = frustum == null || frustum.isVisible(new Box(bb.minX() - 2, bb.minY() - 2,
+						bb.minZ() - 2, bb.maxX() + 3, bb.maxY() + 3, bb.maxZ() + 3));
+				if (vis && debugCullFov > 0.0F) {
+					double dx = (bb.minX() + bb.maxX() + 1) / 2.0 - cameraPos.x;
+					double dy = (bb.minY() + bb.maxY() + 1) / 2.0 - cameraPos.y;
+					double dz = (bb.minZ() + bb.maxZ() + 1) / 2.0 - cameraPos.z;
+					double len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+					if (len > 1.0e-3 && (dx * lookX + dy * lookY + dz * lookZ) / len < debugCosHalf) {
+						vis = false; // portal centre is outside the narrow debug cone
+					}
+				}
+				if (vis) {
+					visible.add(d);
+				}
+			}
+			drawables = visible;
+		}
+
+		// NEAREST-N — the parallax panorama is the expensive draw (a per-portal ray-march + RTT tessellation), so
+		// cap it to the closest maxPanoramas portals within range; the rest fall back to the flat postcard (kept
+		// at full opacity). Computed on the frustum-culled (visible) set, so slots aren't spent on off-screen
+		// portals. Shared via the panoramaSet field with every render path (renderPanoramas, emitRttQuad, the
+		// postcard emitters), including the 1-frame-lagged RTT stash below.
+		int cap = Math.max(0, GlimpseSettings.maxPanoramas);
+		if (drawables.size() <= cap) {
+			Set<UUID> all = new HashSet<>();
+			for (Drawable d : drawables) {
+				if (d.bounds().distanceTo(cameraPos) <= PANORAMA_DISTANCE) {
+					all.add(d.record().id);
+				}
+			}
+			panoramaSet = all;
+		} else {
+			List<Drawable> byDist = new ArrayList<>(drawables);
+			byDist.sort(Comparator.comparingDouble(d -> d.bounds().distanceTo(cameraPos)));
+			Set<UUID> nearest = new HashSet<>();
+			for (Drawable d : byDist) {
+				if (nearest.size() >= cap) {
+					break;
+				}
+				if (d.bounds().distanceTo(cameraPos) <= PANORAMA_DISTANCE) {
+					nearest.add(d.record().id);
+				}
+			}
+			panoramaSet = nearest;
+		}
+
 		if (drawables.isEmpty() && frameDebugDrawables == null) {
-			return;
+			return; // nothing visible; the RTT/overlay stashes were already reset to null at the top of the frame
 		}
 
 		// Under an Iris shaderpack our custom-shader panorama can't render in this deferred pass (Iris
@@ -736,7 +819,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 					new BlockPos(b.minX(), b.minY(), b.minZ()), blocks,
 					axisX ? Direction.Axis.X : Direction.Axis.Z,
 					chosen.auto, chosen.manual, chosen.linkedId, chosen.createdAt, chosen.updatedAt);
-			out.add(new Drawable(rec, null, blocks, b, 255, 0, faceA, 1.0F, 0.0F, 0.0F,
+			out.add(new Drawable(rec, null, blocks, b, 255, 255, 0, faceA, 1.0F, 0.0F, 0.0F,
 					faceA ? 1.0F : -1.0F, 0.0F, 0.0F));
 		}
 		return out;
@@ -949,6 +1032,9 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		// transparent fragments stamps the portal plane over whatever shows through and the pack's deferred pass
 		// then renders that flat/unshaded. Chosen per portal, since each has its own fade.
 		for (Drawable drawable : drawables) {
+			if (!rendersPanorama(drawable)) {
+				continue; // nearest-N: capped portal shows only the postcard (no FBO content to sample here)
+			}
 			RenderLayer layer = RTT_UNLIT
 					? PortalRenderLayers.unlitGlimpse(rttTex, drawable.glimpseFade() >= OCCLUDER_FADE_MIN)
 					: RenderLayer.getItemEntityTranslucentCull(rttTex);
@@ -1006,7 +1092,9 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	 */
 	private static void emitRttPostcard(MatrixStack.Entry entry, VertexConsumerProvider consumers,
 			Drawable drawable) {
-		int alpha = drawable.glimpseAlpha();
+		// A nearest-N-capped portal has no panorama behind the postcard, so it must not fade out up close —
+		// show the postcard at its un-faded alpha instead of the crossfade one.
+		int alpha = rendersPanorama(drawable) ? drawable.glimpseAlpha() : drawable.postcardAlphaNoFade();
 		if (alpha <= 0 || drawable.texture() == null) {
 			return; // fully faded by proximity — the panorama alone is the glimpse here
 		}
@@ -1305,6 +1393,13 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	 * fragment's view ray (its camera-relative position) selects and samples one of the six faces,
 	 * so the view shifts with real perspective as the player moves.
 	 */
+	/** Whether this drawable renders the parallax panorama this frame: it's in the nearest-N set, or it's a
+	 * summoned debug preview (no postcard fallback, always renders). Capped portals render only the postcard. */
+	private static boolean rendersPanorama(Drawable d) {
+		return panoramaSet.contains(d.record().id)
+				|| (frameDebugDrawables != null && frameDebugDrawables.contains(d));
+	}
+
 	private static void renderPanoramas(Matrix4f worldPose, PortalStore store, Vec3d cameraPos,
 			List<Drawable> drawables, boolean ditherFade) {
 		ShaderProgram shader = PortalShaders.panorama();
@@ -1315,8 +1410,8 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 
 		List<PanoDraw> panos = new ArrayList<>();
 		for (Drawable drawable : drawables) {
-			if (drawable.bounds().distanceTo(cameraPos) > PANORAMA_DISTANCE) {
-				continue;
+			if (!rendersPanorama(drawable)) {
+				continue; // nearest-N: capped portals fall back to the postcard (see panoramaSet)
 			}
 			// Debug override (K): the labeled test cubemap, so face mapping/orientation is readable.
 			Identifier[] faces = PanoramaDebug.isTarget(drawable.record().id)
@@ -1827,14 +1922,23 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	}
 
 	private record Drawable(PortalRecord record, GlimpseTextures.GlimpseTexture texture,
-			List<BlockPos> blocks, Bounds bounds, int glimpseAlpha, int veilAlpha,
+			List<BlockPos> blocks, Bounds bounds, int glimpseAlpha, int postcardAlphaNoFade, int veilAlpha,
 			boolean viewerOnFaceA, float glimpseFade, float pushAmount, float rttPushAmount, float pushSign,
 			float encasement, float remoteRecede) {
 	}
 
+	/** The portals rendering the parallax panorama THIS frame — the nearest-N cap (see GlimpseSettings.maxPanoramas).
+	 * Portals not in it fall back to the flat postcard at full opacity. Set after the frustum cull in renderWorld;
+	 * read by renderPanoramas (both paths), emitRttQuad, and the postcard emitters. Render-thread; 1-frame-lagged
+	 * on the RTT path alongside rttDrawables. */
+	private static Set<UUID> panoramaSet = java.util.Collections.emptySet();
+
 	private static void emitGlimpse(MatrixStack.Entry entry, VertexConsumerProvider consumers,
 			Drawable drawable) {
-		if (drawable.glimpseAlpha() <= 0) {
+		// A nearest-N-capped portal has no panorama to reveal, so it shows the postcard at its un-faded alpha
+		// rather than crossfading out up close (which would blank it). See panoramaSet / postcardAlphaNoFade.
+		int alpha = rendersPanorama(drawable) ? drawable.glimpseAlpha() : drawable.postcardAlphaNoFade();
+		if (alpha <= 0) {
 			return; // fully faded by proximity — only the veil remains
 		}
 		Bounds b = drawable.bounds();
@@ -1852,7 +1956,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		// over. The layer culls, so we emit both windings and keep the camera-facing one.
 		VertexConsumer vc = consumers.getBuffer(RenderLayer.getItemEntityTranslucentCull(texture));
 		for (BlockPos pos : drawable.blocks()) {
-			emitFace(entry, vc, pos, b, axisX, drawable.viewerOnFaceA(), drawable.glimpseAlpha(),
+			emitFace(entry, vc, pos, b, axisX, drawable.viewerOnFaceA(), alpha,
 					255, 255, 255, 0.0F, 0.0F, 1.0F, 1.0F, 0.0F);
 		}
 	}
@@ -1997,6 +2101,12 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			double dz = Math.max(Math.max(minZ - point.z, 0.0), point.z - (maxZ + 1));
 			return Math.sqrt(dx * dx + dy * dy + dz * dz);
 		}
+		/** From a record — uses its cached interior bbox so we don't re-walk the block list every frame. */
+		static Bounds of(PortalRecord record) {
+			int[] c = record.interiorBounds();
+			return fromCorners(c[0], c[1], c[2], c[3], c[4], c[5]);
+		}
+
 		static Bounds of(List<BlockPos> interior) {
 			int minX = Integer.MAX_VALUE;
 			int minY = Integer.MAX_VALUE;
@@ -2012,6 +2122,10 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				minZ = Math.min(minZ, pos.getZ());
 				maxZ = Math.max(maxZ, pos.getZ());
 			}
+			return fromCorners(minX, minY, minZ, maxX, maxY, maxZ);
+		}
+
+		private static Bounds fromCorners(int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
 			float width = (maxX - minX) >= (maxZ - minZ) ? (maxX + 1 - minX) : (maxZ + 1 - minZ);
 			float height = maxY + 1 - minY;
 			return new Bounds(minX, minY, minZ, maxX, maxY, maxZ, width, height);

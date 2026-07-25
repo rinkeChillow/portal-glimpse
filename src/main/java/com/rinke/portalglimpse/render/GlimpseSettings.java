@@ -75,6 +75,18 @@ public final class GlimpseSettings {
 	 * thread. Temporary diagnostic for the shader RTT path. */
 	public static volatile boolean debugRttBlit = false;
 
+	/** DEBUG (Numpad /): shrink the frustum used for CULLING only — a narrow cone (this full angle, degrees) around
+	 * the camera look, WITHOUT touching the real view FOV or screen. Off-screen... no: portals outside this small
+	 * cone are culled while still on your (normal-FOV) screen, so you can watch the frustum cull happen. 0 = off
+	 * (cull against the real view frustum only). Cycled 0→60→40→25→0. Render-thread. */
+	public static volatile float debugCullFovDegrees = 0.0F;
+
+	/** Nearest-N cap: at most this many portals render the expensive PARALLAX PANORAMA each frame (the closest
+	 * ones, within {@code PANORAMA_DISTANCE}); the rest fall back to the cheap flat postcard (kept at full
+	 * opacity so they never blank). Stops the panorama cost scaling with portal count in a dense scene. Cycle it
+	 * down with the /pgdebug key (N) to watch the fallback happen. Render-thread. */
+	public static volatile int maxPanoramas = 6;
+
 	/** Master gate for ALL debug tooling — the tuning keybinds, the debug cubemap (K), the
 	 * loading-screen hold (Numpad 5) and the block-travel freeze (Numpad 0). Default OFF; toggled by
 	 * the hidden {@code /pgdebug} command ({@link DebugCommand}). Normal players never see the debug

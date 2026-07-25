@@ -27,6 +27,12 @@ public class PortalRecord {
 	/** Every portal-interior block coordinate; feeds arbitrary shapes (§4.6) and defines identity. */
 	public final List<BlockPos> interior;
 
+	/** Lazily-computed, cached interior bounding box: {@code [minX, minY, minZ, maxX, maxY, maxZ]}. The interior
+	 * is immutable (identity derives from it), so this is constant — computed once instead of walking the block
+	 * list every frame in every consumer (the renderer and the entity mask both need it, per player per frame).
+	 * Do NOT mutate the returned array. Volatile for safe publication; the lazy race is benign (same result). */
+	private volatile int[] interiorBounds;
+
 	/** Portal plane axis (X or Z). */
 	public final Direction.Axis axis;
 
@@ -51,6 +57,31 @@ public class PortalRecord {
 		this.linkedId = linkedId;
 		this.createdAt = createdAt;
 		this.updatedAt = updatedAt;
+	}
+
+	/**
+	 * The interior's bounding box as {@code [minX, minY, minZ, maxX, maxY, maxZ]}, computed once and cached
+	 * (the interior never changes for a given record). Callers must treat the array as read-only. Cheaper than
+	 * re-walking {@link #interior} every frame — the renderer collects it per frame and the entity mask needs it
+	 * per player per frame.
+	 */
+	public int[] interiorBounds() {
+		int[] cached = interiorBounds;
+		if (cached == null) {
+			int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+			int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+			for (BlockPos pos : interior) {
+				minX = Math.min(minX, pos.getX());
+				maxX = Math.max(maxX, pos.getX());
+				minY = Math.min(minY, pos.getY());
+				maxY = Math.max(maxY, pos.getY());
+				minZ = Math.min(minZ, pos.getZ());
+				maxZ = Math.max(maxZ, pos.getZ());
+			}
+			cached = new int[] {minX, minY, minZ, maxX, maxY, maxZ};
+			interiorBounds = cached;
+		}
+		return cached;
 	}
 
 	/**
