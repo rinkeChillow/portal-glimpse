@@ -1067,7 +1067,8 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 				continue; // nearest-N: capped portal shows only the postcard (no FBO content to sample here)
 			}
 			RenderLayer layer = RTT_UNLIT
-					? PortalRenderLayers.unlitGlimpse(rttTex, drawable.glimpseFade() >= OCCLUDER_FADE_MIN)
+					? PortalRenderLayers.unlitGlimpse(rttTex, drawable.glimpseFade() >= OCCLUDER_FADE_MIN
+							&& !GlimpseSettings.debugRttNoDepthWrite)
 					: RenderLayer.getItemEntityTranslucentCull(rttTex);
 			emitRttQuad(entry, consumers.getBuffer(layer), drawable, cameraPos, mvp);
 		}
@@ -1136,7 +1137,8 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			return;
 		}
 		RenderLayer layer = RTT_UNLIT
-				? PortalRenderLayers.unlitGlimpse(texture, alpha >= 250)
+				? PortalRenderLayers.unlitGlimpse(texture, alpha >= 250
+						&& !GlimpseSettings.debugRttNoDepthWrite)
 				: RenderLayer.getItemEntityTranslucentCull(texture);
 		VertexConsumer vc = consumers.getBuffer(layer);
 		int tint = RTT_UNLIT ? Math.round(255 * rttUnlitDim()) : 255;

@@ -87,6 +87,27 @@ public final class GlimpseSettings {
 	 * down with the /pgdebug key (N) to watch the fallback happen. Render-thread. */
 	public static volatile int maxPanoramas = 6;
 
+	/** DEBUG (Numpad -): force the RTT glimpse to draw WITHOUT writing depth, to test whether a shaderpack's
+	 * screen-space AO is what creases our box corners.
+	 *
+	 * <p>Some packs' AO can't be escaped by picking a render program. Solas computes it in {@code deferred.glsl}
+	 * from {@code depthtex0} ALONE — {@code reconstructNormal} derives the surface normal from neighbouring
+	 * depth samples, writes the result to colortex5.g, and {@code deferred1} multiplies it into the colour with
+	 * no material test beyond "not sky". So the unlit beacon-beam routing that spares us on BSL and Photon (whose
+	 * lighting reads gbuffer data that beaconbeam zeroes) does nothing here: the only input is depth, and our
+	 * panorama box has genuine concave corners for the AO to find.
+	 *
+	 * <p>That leaves depth itself as the only lever. With no depth written, depthtex0 keeps whatever lies behind
+	 * our quads and the AO computed there is what lands on us — which is ≈1.0 (none) wherever that's distant or
+	 * sky. If the creases vanish with this on, the theory holds and it becomes a per-pack flag on
+	 * {@link ShaderPackCalibration}; if they persist, depth is ruled out entirely.
+	 *
+	 * <p>NOT free: depth-write is load-bearing. {@code PortalRenderLayers.COLOR_ONLY} exists because stamping
+	 * depth on transparent fragments flattens what shows through, and the glimpse currently writes depth only
+	 * while essentially opaque. Expect other portals' glimpses, clouds and particles to sort differently while
+	 * this is on. Render-thread. */
+	public static volatile boolean debugRttNoDepthWrite = false;
+
 	/** Master gate for ALL debug tooling — the tuning keybinds, the debug cubemap (K), the
 	 * loading-screen hold (Numpad 5) and the block-travel freeze (Numpad 0). Default OFF; toggled by
 	 * the hidden {@code /pgdebug} command ({@link DebugCommand}). Normal players never see the debug

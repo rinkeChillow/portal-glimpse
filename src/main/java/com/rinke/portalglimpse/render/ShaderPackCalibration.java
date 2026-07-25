@@ -67,6 +67,12 @@ public final class ShaderPackCalibration {
 	static {
 		// Tuned in-game 2026-07-21. BSL's beaconbeam is near-linear, so the counter-dim alone matches.
 		BY_KEYWORD.put("bsl", new Calibration("bsl", "BSL", 0.40F));
+		// Confirmed in-game 2026-07-25 ("practically perfect") at the fallback numbers. Solas's beaconbeam is
+		// `albedo.rgb * 1.5` into DRAWBUFFERS:0 — unlit and near-linear like BSL's, so the same dim lands right
+		// and no gamma is needed. Listed explicitly so the pack reports SUPPORTED rather than riding FALLBACK.
+		// (Its screen-space AO still creases our box corners — that's depth-driven and unrelated to these dials;
+		// see GlimpseSettings.debugRttNoDepthWrite.)
+		BY_KEYWORD.put("solas", new Calibration("solas", "Solas", 0.40F));
 		// NOT YET CALIBRATED (deliberately absent — they report unsupported):
 		//   photon        — full-emissive path: darker, and the fade misbehaves
 		//   complementary — c*c*4 + distance falloff: crushes darks, burns brights (needs gamma, not a dim)
