@@ -87,6 +87,17 @@ public final class GlimpseSettings {
 	 * down with the /pgdebug key (N) to watch the fallback happen. Render-thread. */
 	public static volatile int maxPanoramas = 6;
 
+	/** Force the loaded shaderpack's ambient occlusion OFF, via Iris's own shader-option system.
+	 *
+	 * <p>The blunt fix for the corner creases on our panorama box. Some packs' AO can't be escaped any other
+	 * way — Solas derives it from {@code depthtex0} alone, with no material input, so no render-program trick
+	 * on our side can exempt our quads. See {@link ShaderAoOverride}.
+	 *
+	 * <p>DEFAULT OFF, and it should stay a deliberate choice: this turns off the pack's AO for the WHOLE
+	 * WORLD, not just our portals. It also needs a shaderpack RELOAD to take effect, since options are baked
+	 * at compile time. Client-thread + read during pack load. */
+	public static volatile boolean suppressShaderAo = false;
+
 	/** DEBUG (Numpad -): force the RTT glimpse to draw WITHOUT writing depth, to test whether a shaderpack's
 	 * screen-space AO is what creases our box corners.
 	 *

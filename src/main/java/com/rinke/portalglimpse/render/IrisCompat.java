@@ -14,6 +14,9 @@ import java.util.Optional;
  */
 public final class IrisCompat {
 
+	private static final org.slf4j.Logger LOGGER =
+			org.slf4j.LoggerFactory.getLogger("portal-glimpse");
+
 	private static final Method GET_INSTANCE;
 	private static final Method IS_SHADER_PACK_IN_USE;
 	/** {@code Iris.getIrisConfig()} — INTERNAL. The public IrisApi exposes no pack name, so this is the only
@@ -85,6 +88,32 @@ public final class IrisCompat {
 			}
 			return false;
 		} catch (Throwable ignored) {
+			return false;
+		}
+	}
+
+	/**
+	 * Ask Iris to reload the current shaderpack — {@code Iris.loadShaderpack()}, which is public static.
+	 *
+	 * <p>Needed because shader OPTIONS are baked when the pack compiles, so toggling
+	 * {@link GlimpseSettings#suppressShaderAo} does nothing until the pack is rebuilt. Reloading re-runs
+	 * {@code ShaderPackOptions}' constructor, which is where {@code IrisShaderPackOptionsMixin} injects our
+	 * overrides.
+	 *
+	 * <p>Deliberately NOT routed through {@code Iris.getShaderPackOptionQueue()} /
+	 * {@code queueShaderPackOptionsFromProperties}, even though both are public: those PERSIST into the
+	 * user's saved shader config, so suppressing AO would permanently rewrite settings they'd have to undo by
+	 * hand. The mixin only affects the in-memory compile and leaves their config untouched.
+	 *
+	 * @return false if Iris is absent or the call failed, so the caller can tell the user nothing happened
+	 */
+	public static boolean reloadShaderpack() {
+		try {
+			Class<?> iris = Class.forName("net.irisshaders.iris.Iris");
+			iris.getMethod("loadShaderpack").invoke(null);
+			return true;
+		} catch (Throwable t) {
+			LOGGER.warn("[portal-glimpse] could not reload the shaderpack via Iris: {}", t.toString());
 			return false;
 		}
 	}
