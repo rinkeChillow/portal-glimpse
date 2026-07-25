@@ -14,7 +14,6 @@
 		"DownloadingTerrainScreenMixin",
 		"GameRendererMixin",
 		"IrisPipelineMixin",
-		"IrisShaderPackOptionsMixin",
 		"MinecraftClientAccessor",
 		"SodiumLevelSliceMixin",
 		"WorldRendererMixin"
