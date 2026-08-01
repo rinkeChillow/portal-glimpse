@@ -1066,11 +1066,34 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			if (!rendersPanorama(drawable)) {
 				continue; // nearest-N: capped portal shows only the postcard (no FBO content to sample here)
 			}
+			// FLAT-DEPTH mode hands the colour pass no depth at all; the flat plane below supplies it instead.
+			boolean writeDepth = drawable.glimpseFade() >= OCCLUDER_FADE_MIN
+					&& !GlimpseSettings.debugRttNoDepthWrite
+					&& !GlimpseSettings.rttFlatDepth;
 			RenderLayer layer = RTT_UNLIT
-					? PortalRenderLayers.unlitGlimpse(rttTex, drawable.glimpseFade() >= OCCLUDER_FADE_MIN
-							&& !GlimpseSettings.debugRttNoDepthWrite)
+					? PortalRenderLayers.unlitGlimpse(rttTex, writeDepth)
 					: RenderLayer.getItemEntityTranslucentCull(rttTex);
 			emitRttQuad(entry, consumers.getBuffer(layer), drawable, cameraPos, mvp);
+		}
+		// FLAT DEPTH: a second, colour-less pass that stamps a FLAT plane across each opening into the depth
+		// buffer. A pack whose AO reads only depth (Solas) reconstructs its normals from what it finds there —
+		// so with the box's real concave corners replaced by one flat wall, there is no crease to draw, while
+		// the colour above stays the full parallax box. Everything remains in the OPAQUE stage, which is what
+		// the translucent-pass experiment had to give up: reflections still see the glimpse, and the world
+		// behind the portal is still occluded instead of showing through.
+		if (GlimpseSettings.rttFlatDepth) {
+			for (Drawable drawable : drawables) {
+				if (!rendersPanorama(drawable) || drawable.glimpseFade() < OCCLUDER_FADE_MIN) {
+					continue; // mid-fade the glimpse deliberately writes no depth at all (see COLOR_ONLY)
+				}
+				VertexConsumer dvc = consumers.getBuffer(PortalRenderLayers.glimpseDepthOnly(rttTex));
+				Bounds b = drawable.bounds();
+				boolean axisX = drawable.record().axis == Direction.Axis.X;
+				for (BlockPos pos : drawable.blocks()) {
+					emitFace(entry, dvc, pos, b, axisX, drawable.viewerOnFaceA(), 255,
+							255, 255, 255, 0.0F, 0.0F, 1.0F, 1.0F, 0.0F);
+				}
+			}
 		}
 		VertexConsumerProvider.Immediate immediate =
 				consumers instanceof VertexConsumerProvider.Immediate imm ? imm : null;

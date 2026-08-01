@@ -21,7 +21,23 @@ public final class GlimpseWorldRendering {
 		// flushed, so vanilla's outline post-process (forced by WorldRendererMixin) glows the edges.
 		WorldRenderEvents.AFTER_ENTITIES.register(PortalGlowOutline::render);
 		// RTT shader method: draw the panorama quad here (entity phase) so Iris shades it in its gbuffers.
-		WorldRenderEvents.AFTER_ENTITIES.register(context -> GlimpseRenderers.get().renderInEntityPass(context));
+		WorldRenderEvents.AFTER_ENTITIES.register(context -> {
+			if (!GlimpseSettings.rttTranslucentPass) {
+				GlimpseRenderers.get().renderInEntityPass(context);
+			}
+		});
+		// ...or here instead, one pass later. A shaderpack's deferred programs run BETWEEN the opaque gbuffers
+		// and the translucent ones, and that is where screen-space AO is applied — so geometry drawn in the
+		// translucent stage is composited AFTER the AO and never receives it. Drawing the RTT quad here is
+		// therefore the only way to exempt OUR quad from a pack's AO without touching the pack (shader options
+		// are compile-time and pack-global, so they can never be scoped per-draw). See
+		// GlimpseSettings.rttTranslucentPass. Registered after the renderWorld handler above so the stash it
+		// writes each frame is already populated when this runs.
+		WorldRenderEvents.AFTER_TRANSLUCENT.register(context -> {
+			if (GlimpseSettings.rttTranslucentPass) {
+				GlimpseRenderers.get().renderInEntityPass(context);
+			}
+		});
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(() -> {
 			GlimpseTextures.clear(client);
 			PanoramaTextures.clear(client);

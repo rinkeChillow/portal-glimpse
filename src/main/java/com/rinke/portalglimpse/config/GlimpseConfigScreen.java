@@ -81,11 +81,18 @@ public final class GlimpseConfigScreen {
 			// An uncalibrated pack still renders (on a fallback dim) but can look too dark/washed/blown out.
 			general.addEntry(entry.startTextDescription(
 					ShaderPackCalibration.packName()
-							.map(name -> ShaderPackCalibration.isCurrentPackSupported()
-									? Text.translatable("portal-glimpse.config.shaderpackStatus.supported", name)
-											.formatted(Formatting.GREEN)
-									: Text.translatable("portal-glimpse.config.shaderpackStatus.unsupported", name)
-											.formatted(Formatting.YELLOW))
+							.map(name -> switch (ShaderPackCalibration.currentLevel()) {
+								case FULL -> Text.translatable(
+										"portal-glimpse.config.shaderpackStatus.supported", name)
+										.formatted(Formatting.GREEN);
+								case PARTIAL -> Text.translatable(
+										"portal-glimpse.config.shaderpackStatus.partial", name,
+										ShaderPackCalibration.currentCaveat().orElse(""))
+										.formatted(Formatting.GOLD);
+								case UNSUPPORTED -> Text.translatable(
+										"portal-glimpse.config.shaderpackStatus.unsupported", name)
+										.formatted(Formatting.YELLOW);
+							})
 							.orElse(Text.translatable("portal-glimpse.config.shaderpackStatus.none")
 									.formatted(Formatting.GRAY)))
 					.build());

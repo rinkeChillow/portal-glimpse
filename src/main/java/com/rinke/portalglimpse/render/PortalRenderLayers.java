@@ -46,6 +46,21 @@ public final class PortalRenderLayers {
 	private static final Function<Identifier, RenderLayer> COLOR_ONLY = Util.memoize(
 			(Identifier texture) -> build(texture, RenderPhase.COLOR_MASK, "portal_glimpse_unlit_nodepth"));
 
+	/** Depth-only variant — writes NO colour, only depth. Used to hand a shaderpack's screen-space AO a FLAT
+	 * surface to reconstruct its normals from.
+	 *
+	 * <p>Packs like Solas derive AO from {@code depthtex0} alone, so the only thing that decides whether our
+	 * glimpse gets creased is the SHAPE of the depth we write — and our panorama box writes genuine concave
+	 * corners for the AO to find. Splitting the draw in two breaks that link: the box supplies the colour with
+	 * depth off, then a flat plane across the opening supplies the depth with colour off. The AO then samples
+	 * a flat wall and finds nothing to crease, while the image stays the parallax box.
+	 *
+	 * <p>Unlike moving the draw into the translucent pass, this keeps everything in the opaque gbuffer stage,
+	 * so screen-space reflections still see the glimpse and the real terrain behind the portal is still
+	 * occluded rather than showing through. */
+	private static final Function<Identifier, RenderLayer> DEPTH_ONLY = Util.memoize(
+			(Identifier texture) -> build(texture, RenderPhase.DEPTH_MASK, "portal_glimpse_depth_only"));
+
 	private static RenderLayer build(Identifier texture, RenderPhase.WriteMaskState writeMask, String name) {
 		return RenderLayer.of(
 				name,
@@ -73,5 +88,10 @@ public final class PortalRenderLayers {
 	 *                    content — see {@link #COLOR_ONLY} for why depth must be off while it's fading. */
 	public static RenderLayer unlitGlimpse(Identifier texture, boolean writeDepth) {
 		return writeDepth ? WITH_DEPTH.apply(texture) : COLOR_ONLY.apply(texture);
+	}
+
+	/** The depth-only companion pass — see {@link #DEPTH_ONLY}. */
+	public static RenderLayer glimpseDepthOnly(Identifier texture) {
+		return DEPTH_ONLY.apply(texture);
 	}
 }

@@ -26,8 +26,9 @@ import net.minecraft.util.Identifier;
  * block-hiding under other renderers like Sodium), Numpad 3 RTT FBO blit, and the shaderpack calibration
  * dials — Numpad 7/4 brightness ±, Page Up/Down gamma ±, Numpad . to copy the finished table line — and
  * Numpad * to toggle the RTT veil, Numpad / to cycle the debug cull cone (frustum-cull test), Numpad
- * Enter to cycle the nearest-N panorama cap, and Numpad - to drop the RTT glimpse's depth-write (the
- * shader-AO corner-crease test). (The
+ * Enter to cycle the nearest-N panorama cap, and the two shader-AO crease levers — Numpad - to drop the
+ * RTT glimpse's depth-write, Numpad + to move it into the translucent pass (after the pack's deferred AO).
+ * (The
  * Numpad-5 loading-screen hold is polled separately in {@code PortalTransitionView}.)
  */
 public final class GlimpseKeybinds {
@@ -53,6 +54,8 @@ public final class GlimpseKeybinds {
 	private static final int KEY_CULL_FOV = GLFW.GLFW_KEY_KP_DIVIDE;
 	private static final int KEY_NEAREST_N = GLFW.GLFW_KEY_KP_ENTER;
 	private static final int KEY_RTT_NO_DEPTH = GLFW.GLFW_KEY_KP_SUBTRACT;
+	private static final int KEY_RTT_PASS = GLFW.GLFW_KEY_KP_ADD;
+	private static final int KEY_RTT_FLAT_DEPTH = GLFW.GLFW_KEY_L;
 
 	/** How far one press moves each calibration dial. Brightness is a linear gain so it wants a fine step;
 	 * gamma is an exponent where small moves are already very visible. */
@@ -63,7 +66,8 @@ public final class GlimpseKeybinds {
 			KEY_VEIL_UP, KEY_VEIL_DOWN, KEY_TOGGLE_GLIMPSES, KEY_TOGGLE_FADE,
 			KEY_FOV_UP, KEY_FOV_DOWN, KEY_DEBUG_PANORAMA, KEY_BLOCK_TRAVEL, KEY_GHOST_FREEZE,
 			KEY_RTT_BLIT, KEY_DIM_UP, KEY_DIM_DOWN, KEY_GAMMA_UP, KEY_GAMMA_DOWN,
-			KEY_CALIBRATION_REPORT, KEY_RTT_VEIL, KEY_CULL_FOV, KEY_NEAREST_N, KEY_RTT_NO_DEPTH
+			KEY_CALIBRATION_REPORT, KEY_RTT_VEIL, KEY_CULL_FOV, KEY_NEAREST_N, KEY_RTT_NO_DEPTH,
+			KEY_RTT_PASS, KEY_RTT_FLAT_DEPTH
 	};
 	/** Previous frame's down-state per key, for rising-edge detection. */
 	private static final boolean[] WAS_DOWN = new boolean[KEYS.length];
@@ -211,6 +215,25 @@ public final class GlimpseKeybinds {
 			actionbar(client, off
 					? "RTT depth-write OFF — if the corner creases go, it's the pack's depth-driven AO"
 					: "RTT depth-write ON (normal)");
+		}
+		if (justPressed[19]) {
+			// Move the RTT glimpse between the opaque (entity) pass and the translucent pass. The pack's
+			// deferred AO runs between the two, so the translucent side never receives it — and only our quad
+			// moves, so the world keeps its AO. See GlimpseSettings.rttTranslucentPass.
+			boolean translucent = !GlimpseSettings.rttTranslucentPass;
+			GlimpseSettings.rttTranslucentPass = translucent;
+			actionbar(client, translucent
+					? "RTT glimpse in the TRANSLUCENT pass — drawn after the pack's deferred AO (no creases?)"
+					: "RTT glimpse in the ENTITY pass (normal) — the pack's AO applies to it");
+		}
+		if (justPressed[20]) {
+			// Colour from the box, depth from a flat plane — see GlimpseSettings.rttFlatDepth. Unlike the other
+			// two crease levers this stays in the opaque pass, so reflections and occlusion are unaffected.
+			boolean flat = !GlimpseSettings.rttFlatDepth;
+			GlimpseSettings.rttFlatDepth = flat;
+			actionbar(client, flat
+					? "RTT FLAT DEPTH on — box colour, flat depth: the AO has no corners to crease"
+					: "RTT flat depth off — the box writes its own depth again (normal)");
 		}
 		// TEMP DIAGNOSTIC: surface why the entity-over-panorama (PortalEntityMask) did or didn't engage for a
 		// player near a captured portal — printed only when the decision changes, so it's not spam.

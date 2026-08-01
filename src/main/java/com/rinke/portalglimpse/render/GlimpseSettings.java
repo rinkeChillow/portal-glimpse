@@ -87,6 +87,52 @@ public final class GlimpseSettings {
 	 * down with the /pgdebug key (N) to watch the fallback happen. Render-thread. */
 	public static volatile int maxPanoramas = 6;
 
+	/** DEBUG (Numpad +): draw the RTT glimpse in the TRANSLUCENT pass instead of the entity (opaque) pass —
+	 * the only lever that can exempt our quad from a shaderpack's screen-space AO without touching the world.
+	 *
+	 * <p>A pack's deferred programs run BETWEEN the opaque gbuffers and the translucent ones; that's what
+	 * {@code deferred}/{@code deferred1} are for, and it's where AO lands. Our quad currently draws at
+	 * {@code AFTER_ENTITIES} = the opaque stage, so the AO pass sees its genuine concave box corners and
+	 * creases them, correctly. Geometry drawn in the TRANSLUCENT stage is composited after AO has already been
+	 * applied and never receives it — and only our quad moves, so the world keeps its AO.
+	 *
+	 * <p>This is the render-side answer to a problem that has no shader-side one: Solas derives AO from
+	 * {@code depthtex0} alone (no material input), so no gbuffer routing can exempt us, and shader OPTIONS are
+	 * compile-time and pack-global so they can never be scoped to one draw. Pass order is the remaining
+	 * granularity. Unlike an Iris mixin this cannot crash anything — worst case it looks wrong.
+	 *
+	 * <p>KNOWN COSTS, measured in-game 2026-07-28 — this kills the creases but is NOT free, and both costs
+	 * come from the same root: after the deferred pass the real scene is already shaded into the colour
+	 * buffer, so our quad is compositing ONTO the finished world rather than being part of it.
+	 * <ul>
+	 * <li><b>The real terrain shows through the glimpse.</b> Our layer blends, so wherever the sampled FBO is
+	 * not fully opaque the already-shaded world behind the portal survives underneath and you read its
+	 * silhouettes inside the destination. In the opaque stage this could not happen: the quad wrote depth
+	 * before the world was shaded, so the terrain behind was simply never drawn there.</li>
+	 * <li><b>Screen-space reflections lose the glimpse.</b> SSR is computed in the composite passes from the
+	 * gbuffer, so geometry added afterwards cannot appear in any reflection — water reflects the world
+	 * behind the portal instead of the destination. This one is STRUCTURAL, not a bug to chase: "after the
+	 * reflection pass" and "visible in reflections" are mutually exclusive by construction.</li>
+	 * </ul>
+	 * Sorting against other portals' glimpses, clouds and particles may also change. Render-thread. */
+	public static volatile boolean rttTranslucentPass = false;
+
+	/** DEBUG (L): split the RTT glimpse into a colour pass and a FLAT depth pass, so a
+	 * depth-driven ambient occlusion has no corners to crease.
+	 *
+	 * <p>The point the other two levers each miss. A pack like Solas builds AO purely from {@code depthtex0},
+	 * so what decides whether we get creased is the SHAPE of the depth we write — and our panorama box writes
+	 * real concave corners. Dropping depth entirely ({@link #debugRttNoDepthWrite}) removes the creases but
+	 * also removes our occlusion; moving to the translucent pass ({@link #rttTranslucentPass}) removes them but
+	 * costs reflections and lets the real terrain show through. This keeps the box's COLOUR and replaces only
+	 * its DEPTH with a flat plane across the opening: the AO samples a flat wall and finds nothing to crease,
+	 * while everything stays in the opaque stage so reflections and occlusion behave exactly as before.
+	 *
+	 * <p>Trade: the depth is now a plane rather than the box, so things that depend on the box's true depth
+	 * (volumetrics stopping at the right distance, entities sorting INSIDE the departure box) see the plane
+	 * instead. Watch the box while stepping into a portal. Render-thread. */
+	public static volatile boolean rttFlatDepth = false;
+
 	/** DEBUG (Numpad -): force the RTT glimpse to draw WITHOUT writing depth, to test whether a shaderpack's
 	 * screen-space AO is what creases our box corners.
 	 *

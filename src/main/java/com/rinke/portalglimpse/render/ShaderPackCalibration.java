@@ -48,17 +48,38 @@ public final class ShaderPackCalibration {
 	 *                 countering the pack's CURVE. 1.0 = none. A pack that squares our colour needs 0.5 here;
 	 *                 no amount of {@code unlitDim} can substitute, since scaling can't straighten a curve.
 	 */
-	public record Calibration(String key, String display, float unlitDim, float gamma) {
+	public record Calibration(String key, String display, float unlitDim, float gamma,
+			SupportLevel level, String caveat) {
 
 		/** For packs that only need the brightness dial. */
 		public Calibration(String key, String display, float unlitDim) {
-			this(key, display, unlitDim, 1.0F);
+			this(key, display, unlitDim, 1.0F, SupportLevel.FULL, null);
 		}
+
+		/** For packs that also need the curve dial. */
+		public Calibration(String key, String display, float unlitDim, float gamma) {
+			this(key, display, unlitDim, gamma, SupportLevel.FULL, null);
+		}
+	}
+
+	/**
+	 * How well the glimpse actually holds up on a pack. Three tiers rather than supported/not, because a pack
+	 * can be colour-correct and still show an artefact we cannot reach from our side — saying so plainly beats
+	 * either hiding it or writing the whole pack off.
+	 */
+	public enum SupportLevel {
+		/** Tuned and clean. */
+		FULL,
+		/** Tuned, but with a known visual artefact worth warning about — see {@code caveat}. */
+		PARTIAL,
+		/** No entry: renders on the fallback numbers and may look wrong. */
+		UNSUPPORTED
 	}
 
 	/** Used when a pack has no entry: the BSL-ish default, so an unknown pack still renders (just uncalibrated)
 	 * instead of going black or blowing out. */
-	public static final Calibration FALLBACK = new Calibration("unknown", "Uncalibrated", 0.40F);
+	public static final Calibration FALLBACK =
+			new Calibration("unknown", "Uncalibrated", 0.40F, 1.0F, SupportLevel.UNSUPPORTED, null);
 
 	/** Keyword → calibration. Ordered: the first keyword contained in the pack name wins, so put more specific
 	 * keywords first if two could ever overlap. ONLY add an entry once the pack has actually been tuned. */
@@ -67,12 +88,18 @@ public final class ShaderPackCalibration {
 	static {
 		// Tuned in-game 2026-07-21. BSL's beaconbeam is near-linear, so the counter-dim alone matches.
 		BY_KEYWORD.put("bsl", new Calibration("bsl", "BSL", 0.40F));
+		// Confirmed working in-game 2026-07-28 on the fallback numbers.
+		BY_KEYWORD.put("photon", new Calibration("photon", "Photon", 0.40F));
 		// Confirmed in-game 2026-07-25 ("practically perfect") at the fallback numbers. Solas's beaconbeam is
 		// `albedo.rgb * 1.5` into DRAWBUFFERS:0 — unlit and near-linear like BSL's, so the same dim lands right
 		// and no gamma is needed. Listed explicitly so the pack reports SUPPORTED rather than riding FALLBACK.
 		// (Its screen-space AO still creases our box corners — that's depth-driven and unrelated to these dials;
 		// see GlimpseSettings.debugRttNoDepthWrite.)
-		BY_KEYWORD.put("solas", new Calibration("solas", "Solas", 0.40F));
+		// PARTIAL: colour is right, but Solas derives its AO from depthtex0 alone (no material input), so it
+		// creases the glimpse's edges and no render-side routing of ours can opt out. See
+		// portal-seam-ambient-occlusion notes / GlimpseSettings.rttFlatDepth.
+		BY_KEYWORD.put("solas", new Calibration("solas", "Solas", 0.40F, 1.0F, SupportLevel.PARTIAL,
+				"You will see dark creases along the edges of the glimpse."));
 		// NOT YET CALIBRATED (deliberately absent — they report unsupported):
 		//   photon        — full-emissive path: darker, and the fade misbehaves
 		//   complementary — c*c*4 + distance falloff: crushes darks, burns brights (needs gamma, not a dim)
@@ -134,7 +161,8 @@ public final class ShaderPackCalibration {
 		if (tuning == null || !name.equals(tuningPack)) {
 			Calibration base = current().orElse(FALLBACK);
 			tuningPack = name;
-			tuning = new Calibration(base.key(), base.display(), base.unlitDim(), base.gamma());
+			tuning = new Calibration(base.key(), base.display(), base.unlitDim(), base.gamma(),
+					base.level(), base.caveat());
 		}
 		return tuning;
 	}
@@ -144,7 +172,7 @@ public final class ShaderPackCalibration {
 		Calibration c = beginTuning();
 		if (c != null) {
 			tuning = new Calibration(c.key(), c.display(),
-					clamp(c.unlitDim() + delta, 0.02F, 4.0F), c.gamma());
+					clamp(c.unlitDim() + delta, 0.02F, 4.0F), c.gamma(), c.level(), c.caveat());
 		}
 	}
 
@@ -153,7 +181,7 @@ public final class ShaderPackCalibration {
 		Calibration c = beginTuning();
 		if (c != null) {
 			tuning = new Calibration(c.key(), c.display(), c.unlitDim(),
-					clamp(c.gamma() + delta, 0.20F, 4.0F));
+					clamp(c.gamma() + delta, 0.20F, 4.0F), c.level(), c.caveat());
 		}
 	}
 
@@ -211,6 +239,16 @@ public final class ShaderPackCalibration {
 		return current().isPresent();
 	}
 
+	/** The active pack's tier — {@link SupportLevel#UNSUPPORTED} when we have no entry for it. */
+	public static SupportLevel currentLevel() {
+		return current().map(Calibration::level).orElse(SupportLevel.UNSUPPORTED);
+	}
+
+	/** The caveat to show for a PARTIAL pack; empty for any other tier. */
+	public static Optional<String> currentCaveat() {
+		return current().filter(c -> c.level() == SupportLevel.PARTIAL).map(Calibration::caveat);
+	}
+
 	private static Optional<Calibration> match(String fullName) {
 		String normalized = fullName.toLowerCase(Locale.ROOT);
 		for (Map.Entry<String, Calibration> e : BY_KEYWORD.entrySet()) {
@@ -236,8 +274,11 @@ public final class ShaderPackCalibration {
 		}
 		lastSeenPack = name;
 		Optional<Calibration> cal = match(name);
-		lastSeenSupported = cal.isPresent();
-		if (cal.isPresent()) {
+		lastSeenSupported = cal.isPresent() && cal.get().level() == SupportLevel.FULL;
+		if (cal.isPresent() && cal.get().level() == SupportLevel.PARTIAL) {
+			PortalGlimpse.LOGGER.info("Portal Glimpse: shaderpack '{}' is PARTIALLY supported — {}",
+					name, cal.get().caveat());
+		} else if (cal.isPresent()) {
 			PortalGlimpse.LOGGER.info("Portal Glimpse: shaderpack '{}' recognised — using '{}' RTT calibration",
 					name, cal.get().display());
 		} else {

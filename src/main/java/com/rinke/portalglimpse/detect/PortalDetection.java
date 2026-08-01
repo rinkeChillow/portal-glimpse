@@ -4,6 +4,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import com.rinke.portalglimpse.data.PortalStore;
+import com.rinke.portalglimpse.render.GlimpseSettings;
 import com.rinke.portalglimpse.data.PortalStorage;
 
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientChunkEvents;
@@ -130,10 +131,16 @@ public final class PortalDetection {
 		if (player == null) {
 			return;
 		}
+		// Coordinates and block count are developer detail — they only mean something while diagnosing a
+		// detection, and reading them to every player who lights a portal is noise. Debug mode gets the full
+		// line; everyone else just gets told the portal was picked up.
 		BlockPos anchor = result.record().anchor;
-		player.sendMessage(Text.literal("[Portal Glimpse] Portal detected at "
-				+ anchor.getX() + ", " + anchor.getY() + ", " + anchor.getZ()
-				+ " (" + result.record().interior.size() + " blocks)").formatted(Formatting.AQUA), false);
+		String detail = GlimpseSettings.debugMode
+				? " at " + anchor.getX() + ", " + anchor.getY() + ", " + anchor.getZ()
+						+ " (" + result.record().interior.size() + " blocks)"
+				: "";
+		player.sendMessage(Text.literal("[Portal Glimpse] Portal detected" + detail)
+				.formatted(Formatting.AQUA), false);
 		if (result.saved()) {
 			player.sendMessage(Text.literal("[Portal Glimpse] Portal saved successfully")
 					.formatted(Formatting.GREEN), false);

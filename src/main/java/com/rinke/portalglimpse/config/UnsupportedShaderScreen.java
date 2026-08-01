@@ -55,7 +55,9 @@ public class UnsupportedShaderScreen extends Screen {
 	private long handleShownAt;
 
 	public UnsupportedShaderScreen(Screen parent, String packName) {
-		super(Text.translatable("portal-glimpse.unsupported.title"));
+		super(Text.translatable(ShaderPackCalibration.currentCaveat().isPresent()
+				? "portal-glimpse.partial.title"
+				: "portal-glimpse.unsupported.title"));
 		this.parent = parent;
 		this.packName = packName;
 		this.bslInstalled = ShaderPackCalibration.isPackInstalled("bsl");
@@ -159,7 +161,7 @@ public class UnsupportedShaderScreen extends Screen {
 		if (current == null
 				|| !IrisCompat.shadersActive()
 				|| GlimpseSettings.shaderRenderMethod != ShaderRenderMethod.RTT
-				|| ShaderPackCalibration.isCurrentPackSupported()) {
+				|| ShaderPackCalibration.currentLevel() == ShaderPackCalibration.SupportLevel.FULL) {
 			close();
 			return;
 		}
@@ -174,15 +176,29 @@ public class UnsupportedShaderScreen extends Screen {
 		context.drawCenteredTextWithShadow(this.textRenderer, this.title, cx, top, 0xFFFFFF);
 		context.drawCenteredTextWithShadow(this.textRenderer,
 				Text.literal(packName).formatted(Formatting.YELLOW), cx, top + 14, 0xFFFFFF);
-		context.drawCenteredTextWithShadow(this.textRenderer,
-				Text.translatable("portal-glimpse.unsupported.line1").formatted(Formatting.GRAY),
-				cx, top + 32, 0xFFFFFF);
-		context.drawCenteredTextWithShadow(this.textRenderer,
-				Text.translatable("portal-glimpse.unsupported.line2").formatted(Formatting.GRAY),
-				cx, top + 44, 0xFFFFFF);
-		context.drawCenteredTextWithShadow(this.textRenderer,
-				Text.translatable("portal-glimpse.unsupported.line3").formatted(Formatting.GRAY),
-				cx, top + 56, 0xFFFFFF);
+		// A PARTIAL pack gets its own wording: it IS calibrated, so telling the player it "isn't supported"
+		// would be wrong and would push them off a pack that mostly looks right. Name the one artefact instead.
+		java.util.Optional<String> caveat = ShaderPackCalibration.currentCaveat();
+		if (caveat.isPresent()) {
+			context.drawCenteredTextWithShadow(this.textRenderer,
+					Text.translatable("portal-glimpse.partial.line1").formatted(Formatting.GRAY),
+					cx, top + 32, 0xFFFFFF);
+			context.drawCenteredTextWithShadow(this.textRenderer,
+					Text.literal(caveat.get()).formatted(Formatting.GOLD), cx, top + 44, 0xFFFFFF);
+			context.drawCenteredTextWithShadow(this.textRenderer,
+					Text.translatable("portal-glimpse.partial.line3").formatted(Formatting.GRAY),
+					cx, top + 56, 0xFFFFFF);
+		} else {
+			context.drawCenteredTextWithShadow(this.textRenderer,
+					Text.translatable("portal-glimpse.unsupported.line1").formatted(Formatting.GRAY),
+					cx, top + 32, 0xFFFFFF);
+			context.drawCenteredTextWithShadow(this.textRenderer,
+					Text.translatable("portal-glimpse.unsupported.line2").formatted(Formatting.GRAY),
+					cx, top + 44, 0xFFFFFF);
+			context.drawCenteredTextWithShadow(this.textRenderer,
+					Text.translatable("portal-glimpse.unsupported.line3").formatted(Formatting.GRAY),
+					cx, top + 56, 0xFFFFFF);
+		}
 
 		if (showHandle) {
 			int y = this.height / 2 + 74; // below the last button (which ends around height/2 + 66)
