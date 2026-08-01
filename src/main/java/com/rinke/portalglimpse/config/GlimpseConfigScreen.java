@@ -64,6 +64,13 @@ public final class GlimpseConfigScreen {
 				.setSaveConsumer(v -> config.entityOverPanorama = v)
 				.build());
 
+		general.addEntry(entry.startBooleanToggle(
+						Text.translatable("portal-glimpse.config.menuButton"), config.menuButton)
+				.setDefaultValue(true)
+				.setTooltip(Text.translatable("portal-glimpse.config.menuButton.tooltip"))
+				.setSaveConsumer(v -> config.menuButton = v)
+				.build());
+
 		general.addEntry(entry.startEnumSelector(
 						Text.translatable("portal-glimpse.config.shaderRenderMethod"),
 						ShaderRenderMethod.class, config.shaderRenderMethod)
@@ -95,6 +102,13 @@ public final class GlimpseConfigScreen {
 							})
 							.orElse(Text.translatable("portal-glimpse.config.shaderpackStatus.none")
 									.formatted(Formatting.GRAY)))
+					.build());
+
+			general.addEntry(entry.startBooleanToggle(
+							Text.translatable("portal-glimpse.config.shaderVeil"), config.shaderVeil)
+					.setDefaultValue(false)
+					.setTooltip(Text.translatable("portal-glimpse.config.shaderVeil.tooltip"))
+					.setSaveConsumer(v -> config.shaderVeil = v)
 					.build());
 
 			general.addEntry(entry.startBooleanToggle(

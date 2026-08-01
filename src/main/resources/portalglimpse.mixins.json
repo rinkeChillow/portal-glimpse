@@ -12,6 +12,7 @@
 		"ChunkRendererRegionMixin",
 		"DownloadingTerrainScreenAccessor",
 		"DownloadingTerrainScreenMixin",
+		"GameMenuScreenMixin",
 		"GameRendererMixin",
 		"IrisPipelineMixin",
 		"MinecraftClientAccessor",

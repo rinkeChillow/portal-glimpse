@@ -571,7 +571,8 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		// positions simply un-hides them — through a per-frame channel we control. Being translucent terrain,
 		// the pack composites the swirl AFTER the deferred pass, i.e. over our panorama (which draws in the
 		// opaque gbuffer stage), which is the layering we want.
-		if (shaders && GlimpseSettings.shaderRenderMethod == ShaderRenderMethod.RTT
+		if (shaders && GlimpseSettings.shaderVeil
+				&& GlimpseSettings.shaderRenderMethod == ShaderRenderMethod.RTT
 				&& GlimpseSettings.rttVeilMode == RttVeilMode.TERRAIN && !GhostState.isActive()) {
 			Map<Long, BlockState> merged = new HashMap<>(overrides);
 			for (Drawable drawable : drawables) {
@@ -865,7 +866,9 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 
 		renderPanoramas(IDENTITY, store, cam, panos, false); // view already on the stack; identity world-pose
 		drawShaderPostcards(client, cam, panos);      // the flat postcard, over the panorama (the shader floor)
-		drawShaderVeil(client, cam, panos);           // our custom swirl, over both
+		if (GlimpseSettings.shaderVeil) {
+			drawShaderVeil(client, cam, panos);       // our custom swirl, over both — off by default under shaders
+		}
 
 		modelView.popMatrix();
 		RenderSystem.applyModelViewMatrix();
@@ -1118,7 +1121,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		// panorama uses: the panorama is a photo and must not be shaded, but the veil SHOULD be, because a
 		// shaderpack treating this bright quad as an emissive light is precisely what lit the obsidian frame.
 		// Whether that survives Iris's opaque gbuffer stage is the open question — see GlimpseSettings.rttVeil.
-		if (GlimpseSettings.rttVeilMode == RttVeilMode.QUAD) {
+		if (GlimpseSettings.shaderVeil && GlimpseSettings.rttVeilMode == RttVeilMode.QUAD) {
 			MinecraftClient client = MinecraftClient.getInstance();
 			Sprite portalSprite = client.getBlockRenderManager().getModels()
 					.getModelParticleSprite(Blocks.NETHER_PORTAL.getDefaultState());

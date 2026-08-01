@@ -32,8 +32,11 @@ public final class GlimpseConfig {
 	// Mirrors of the runtime fields in GlimpseSettings that players are allowed to set.
 	public boolean glimpsesVisible = true;
 	public boolean entityOverPanorama = true; // show players standing in a portal, through the panorama
+	public boolean menuButton = true;        // the portal shortcut in the pause menu that opens these settings
 	public ShaderRenderMethod shaderRenderMethod = ShaderRenderMethod.OVERLAY; // how the glimpse draws under shaders
 	public boolean godRayOccluder = true;    // RTT+shaders: hidden terrain cage that blocks god rays through the glimpse
+	public boolean shaderVeil = false;       // shaders only: draw the swirl over the glimpse. Off — the shader-lit
+	                                         // destination is the point, and a swirl on top only hides it. No shaders = unaffected.
 	public float panoramaFovDegrees = 60.0F; // 20..60 (half field-of-view)
 	public int rttMotionPredictionPercent = 100; // 0..100% RTT lag prediction (0 = off, 100 = full one-frame)
 	public int netherVeilAlpha = 51;         // 0..255 (~20%) — Nether view, seen from the Overworld
@@ -90,8 +93,10 @@ public final class GlimpseConfig {
 	public void apply() {
 		GlimpseSettings.glimpsesVisible = glimpsesVisible;
 		GlimpseSettings.entityOverPanorama = entityOverPanorama;
+		GlimpseSettings.menuButton = menuButton;
 		GlimpseSettings.shaderRenderMethod = shaderRenderMethod != null ? shaderRenderMethod : ShaderRenderMethod.RTT;
 		GlimpseSettings.godRayOccluder = godRayOccluder;
+		GlimpseSettings.shaderVeil = shaderVeil;
 		GlimpseSettings.panoramaFovDegrees = panoramaFovDegrees;
 		GlimpseSettings.rttMotionPrediction = 1.0F + rttMotionPredictionPercent / 100.0F; // 0..100% → 1.0..2.0
 		GlimpseSettings.netherVeilAlpha = netherVeilAlpha;

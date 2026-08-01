@@ -49,6 +49,22 @@ public final class GlimpseSettings {
 	 * the cage may be redundant). See {@code VanillaGlimpseRenderer#buildOccluders}. */
 	public static boolean godRayOccluder = true;
 
+	/** Show the little nether-portal shortcut in the pause menu, next to Advancements, that opens these
+	 * settings ({@code config/PortalMenuButton}). On by default; off for anyone who wants their pause menu
+	 * left alone, and reaches the settings through Mod Menu instead. Read when the pause menu is built. */
+	public static boolean menuButton = true;
+
+	/** Whether the veil (the portal swirl) is drawn at all while a shaderpack is active. DEFAULT OFF.
+	 *
+	 * <p>Under shaders the glimpse is the point: the destination comes through shader-lit and reads as a real
+	 * view, and laying a swirl over it only takes that away. Without shaders the veil stays exactly as it was,
+	 * so a vanilla portal still looks like a vanilla portal — this gate is shader-side only and touches
+	 * neither the no-shader path nor the per-dimension {@link #netherVeilAlpha}/{@link #overworldVeilAlpha}.
+	 *
+	 * <p>Turning it back on restores whichever shader veil the path uses: {@link #rttVeilMode} on RTT, the
+	 * post-composite swirl on the overlay path. */
+	public static boolean shaderVeil = false;
+
 	/** RTT + shaders only: how the veil (the living portal swirl) is drawn over the RTT panorama — see
 	 * {@link RttVeilMode} for what each mode trades away. Cycled live with Numpad * so the two can be compared
 	 * side by side in the same portal. */
