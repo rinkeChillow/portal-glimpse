@@ -79,7 +79,7 @@ public final class GlimpseSettings {
 	/** RTT-only: camera motion-prediction strength for the offscreen panorama render, as the lerp factor
 	 * (1.0 = no prediction / full 1-frame lag, 2.0 = full one-frame extrapolation). Cancels the RTT lag on
 	 * smooth motion; lower it toward 1.0 if fast flicks overshoot. Read on the render thread. */
-	public static volatile float rttMotionPrediction = 2.0F;
+	public static volatile float rttMotionPrediction = 1.5F;
 
 	/** DEBUG (Numpad 0): freeze the player in nether portals — no dimension travel and no nausea
 	 * wobble — so the in-portal glimpse behaviour can be inspected without being teleported away.

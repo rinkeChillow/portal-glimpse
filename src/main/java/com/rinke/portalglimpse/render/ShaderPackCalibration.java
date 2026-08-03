@@ -239,6 +239,20 @@ public final class ShaderPackCalibration {
 		return current().isPresent();
 	}
 
+	/** A SHORT name for the loaded pack, for UI that has a line to fit into.
+	 *
+	 * <p>{@link #packName()} is the raw file name — "BSL_v10.1.3.zip" — which is most of a config row on its
+	 * own and overflowed the status line. A tuned pack has a curated label ("BSL"); anything else falls back
+	 * to the file name with the extension and any trailing version stripped, which is usually close enough. */
+	public static String shortName() {
+		String full = packName().orElse("");
+		return current().map(Calibration::display).orElseGet(() -> {
+			String n = full.replaceFirst("(?i)\\.(zip|jar)$", "");
+			int cut = n.indexOf('_');
+			return cut > 0 ? n.substring(0, cut) : n;
+		});
+	}
+
 	/** The active pack's tier — {@link SupportLevel#UNSUPPORTED} when we have no entry for it. */
 	public static SupportLevel currentLevel() {
 		return current().map(Calibration::level).orElse(SupportLevel.UNSUPPORTED);

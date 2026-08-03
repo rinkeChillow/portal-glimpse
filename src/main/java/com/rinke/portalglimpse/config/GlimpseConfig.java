@@ -38,7 +38,7 @@ public final class GlimpseConfig {
 	public boolean shaderVeil = false;       // shaders only: draw the swirl over the glimpse. Off — the shader-lit
 	                                         // destination is the point, and a swirl on top only hides it. No shaders = unaffected.
 	public float panoramaFovDegrees = 60.0F; // 20..60 (half field-of-view)
-	public int rttMotionPredictionPercent = 100; // 0..100% RTT lag prediction (0 = off, 100 = full one-frame)
+	public int rttMotionPredictionPercent = 50;  // 0..100% RTT lag prediction (0 = off, 100 = full one-frame)
 	public int netherVeilAlpha = 51;         // 0..255 (~20%) — Nether view, seen from the Overworld
 	public int overworldVeilAlpha = 102;     // 0..255 (~40%) — Overworld view, seen from the Nether
 	public int autoCaptureCooldownMinutes = 5; // 0..60 (0 = every eligible travel)

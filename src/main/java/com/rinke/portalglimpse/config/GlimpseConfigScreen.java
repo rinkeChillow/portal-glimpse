@@ -88,13 +88,13 @@ public final class GlimpseConfigScreen {
 			// An uncalibrated pack still renders (on a fallback dim) but can look too dark/washed/blown out.
 			general.addEntry(entry.startTextDescription(
 					ShaderPackCalibration.packName()
+							.map(ignored -> ShaderPackCalibration.shortName())
 							.map(name -> switch (ShaderPackCalibration.currentLevel()) {
 								case FULL -> Text.translatable(
 										"portal-glimpse.config.shaderpackStatus.supported", name)
 										.formatted(Formatting.GREEN);
 								case PARTIAL -> Text.translatable(
-										"portal-glimpse.config.shaderpackStatus.partial", name,
-										ShaderPackCalibration.currentCaveat().orElse(""))
+										"portal-glimpse.config.shaderpackStatus.partial", name)
 										.formatted(Formatting.GOLD);
 								case UNSUPPORTED -> Text.translatable(
 										"portal-glimpse.config.shaderpackStatus.unsupported", name)
@@ -121,7 +121,7 @@ public final class GlimpseConfigScreen {
 			general.addEntry(entry.startIntSlider(
 							Text.translatable("portal-glimpse.config.rttPrediction"),
 							config.rttMotionPredictionPercent, 0, 100)
-					.setDefaultValue(100)
+					.setDefaultValue(50)
 					.setTextGetter(v -> Text.literal(v + "%"))
 					.setTooltip(Text.translatable("portal-glimpse.config.rttPrediction.tooltip"))
 					.setSaveConsumer(v -> config.rttMotionPredictionPercent = v)
