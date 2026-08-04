@@ -42,6 +42,8 @@
 	"portal-glimpse.config.rttPrediction.tooltip": "Cancels RTT lag on fast turns. Lower if it wobbles.",
 	"portal-glimpse.config.panoramaFov": "Panorama Field of View",
 	"portal-glimpse.config.panoramaFov.tooltip": "Higher = wider view, smaller content.",
+	"portal-glimpse.config.postcardFade": "Postcards start at",
+	"portal-glimpse.config.postcardFade.tooltip": "How far out the flat glimpse appears.",
 	"portal-glimpse.config.netherVeilOpacity": "Nether Veil Opacity",
 	"portal-glimpse.config.netherVeilOpacity.tooltip": "Swirl over the Nether view.",
 	"portal-glimpse.config.overworldVeilOpacity": "Overworld Veil Opacity",
@@ -51,7 +53,16 @@
 	"portal-glimpse.config.captureCooldown.tooltip": "Wait before a portal re-captures.",
 	"portal-glimpse.config.captureRadius": "Capture Chunk Radius",
 	"portal-glimpse.config.captureRadius.tooltip": "Terrain loaded before capture. Higher = longer wait.",
-	"portal-glimpse.config.captureRadius.overRender": "%1$s chunks — over your render distance (%2$s)",
 	"portal-glimpse.preview.clickForBigger": "Click for a bigger preview",
-	"portal-glimpse.preview.dragHint": "Drag left / right to look around"
+	"portal-glimpse.preview.dragHint": "Drag left / right to look around",
+	"portal-glimpse.config.storage": "Glimpses on disk: %s",
+	"portal-glimpse.config.storage.scanning": "Glimpses on disk: measuring…",
+	"portal-glimpse.cleanup.title": "Clean Up Glimpses",
+	"portal-glimpse.cleanup.total": "%s across %s worlds and servers",
+	"portal-glimpse.cleanup.scanning": "Measuring…",
+	"portal-glimpse.cleanup.entry": "%s · %s portals",
+	"portal-glimpse.cleanup.delete": "Clean Up",
+	"portal-glimpse.cleanup.confirm": "Click again to delete %s",
+	"portal-glimpse.cleanup.warning": "This cannot be undone.",
+	"portal-glimpse.config.storage.button": "Clean Up…"
 }

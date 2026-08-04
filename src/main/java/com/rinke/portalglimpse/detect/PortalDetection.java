@@ -1,9 +1,12 @@
 package com.rinke.portalglimpse.detect;
 
 import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.List;
 
 import com.rinke.portalglimpse.data.PortalStore;
+import com.rinke.portalglimpse.config.GlimpseConfig;
 import com.rinke.portalglimpse.render.GlimpseSettings;
 import com.rinke.portalglimpse.data.PortalStorage;
 
@@ -75,6 +78,12 @@ public final class PortalDetection {
 
 	/** Periodically re-scan chunks around the player so newly-lit portals are caught promptly. */
 	private static void onClientTick(MinecraftClient client) {
+		// Keep the capture radius inside the render distance. Checked here rather than in the config screen
+		// because render distance is usually changed in VANILLA's video settings, with our screen closed.
+		if (GlimpseSettings.clampCaptureRadius(client.options.getClampedViewDistance())) {
+			GlimpseConfig.get().captureChunkRadius = GlimpseSettings.captureChunkRadius;
+			GlimpseConfig.get().save();
+		}
 		if (++tickCounter < SCAN_INTERVAL_TICKS) {
 			return;
 		}
@@ -107,13 +116,29 @@ public final class PortalDetection {
 			return;
 		}
 		Identifier dimension = world.getRegistryKey().getValue();
+		// Flood-fill once per connected portal, skipping seeds already covered by THIS pass rather than seeds
+		// already claimed by some record.
+		//
+		// Skipping claimed seeds was wrong, and it is what let a resized portal stay broken forever. Break and
+		// re-light a portal bigger and you get a second record for the new shape (§5.3 keys identity on the
+		// block set), while the old record still claims its blocks. From then on EVERY portal block is claimed
+		// by one record or the other, so every seed was skipped, register() never ran again, and nothing ever
+		// reconciled them — the old sub-shape kept painting its glimpse across part of the opening while the
+		// rest stayed vanilla, and it survived restarts because load() re-claimed both.
+		//
+		// Re-registering the same unchanged portal is cheap and idempotent (register reuses the record by id),
+		// so the only real cost is one flood-fill per portal per scan.
+		Set<Long> visitedThisPass = new HashSet<>();
 		for (BlockPos seed : portalBlocks) {
-			if (current.isClaimed(seed)) {
+			if (visitedThisPass.contains(seed.asLong())) {
 				continue;
 			}
 			PortalScanner.Candidate candidate = PortalScanner.scan(world, seed);
 			if (candidate == null) {
 				continue; // incomplete — will be re-scanned when the neighbouring chunk loads
+			}
+			for (BlockPos pos : candidate.interior) {
+				visitedThisPass.add(pos.asLong());
 			}
 			PortalStore.RegisterResult result =
 					current.register(dimension, candidate.anchor, candidate.interior, candidate.axis);

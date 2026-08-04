@@ -21,6 +21,13 @@ public class CaptureSlot {
 	public CaptureSlot() {
 	}
 
+	/** Take on another slot's state — used when a reshaped portal inherits the old shape's capture. */
+	public void copyFrom(CaptureSlot other) {
+		this.hasCapture = other.hasCapture;
+		this.pinned = other.pinned;
+		this.timestamp = other.timestamp;
+	}
+
 	public CaptureSlot(boolean hasCapture, boolean pinned, long timestamp) {
 		this.hasCapture = hasCapture;
 		this.pinned = pinned;

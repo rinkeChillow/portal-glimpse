@@ -134,14 +134,13 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 	private static final float REMOTE_RECEDE_EASE = 0.15F;
 
 	/** Within this distance the parallax panorama renders on the portal (§4.2 close zone). */
+	// Panorama range and the postcard band past it both live in GlimpseSettings so they can be tuned live.
+
 	private static final double PANORAMA_DISTANCE = 32.0;
 
-	/** Proximity fade: the 2D postcard is at full strength here, fading as the player approaches… */
-	private static final double FADE_START = 20.0;
-
-	/** …and fully gone at this distance. Only the postcard fades — the veil stays (Phase 4's
-	 * parallax panorama will own the close range). */
-	private static final double FADE_END = 10.0;
+	/** Width of the postcard's crossfade, in blocks: it is fully visible at
+	 * {@code postcardFadeDistance + FADE_WIDTH} and fully gone at {@code postcardFadeDistance}. */
+	private static final double FADE_WIDTH = 10.0;
 
 	/** Offset of the veil in front of the glimpse plane, avoiding z-fighting. */
 	private static final float VEIL_OFFSET = 0.002F;
@@ -286,6 +285,8 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			// Distance visibility + fade, matching vanilla ENTITY render distance (which scales with
 			// the object's size — a big portal shows from further, like a big entity). Fade the glimpse
 			// out over the last stretch so it's fully gone by the cutoff — no pop when it (un)loads.
+			// Ends a fixed distance past where the postcard takes over (see POSTCARD_RANGE), but never beyond
+			// what the game would draw an entity of this size at — a low entity-distance setting still wins.
 			double maxDist = entityRenderDistance(bounds, client);
 			double centerX = (bounds.minX() + bounds.maxX() + 1) / 2.0;
 			double centerY = (bounds.minY() + bounds.maxY() + 1) / 2.0;
@@ -445,7 +446,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			float fade = 1.0F;
 			if (GlimpseSettings.proximityFade) {
 				fade = (float) Math.min(1.0, Math.max(0.0,
-						(distance - FADE_END) / (FADE_START - FADE_END)));
+						(distance - GlimpseSettings.postcardFadeDistance) / FADE_WIDTH));
 			}
 			int glimpseAlpha = GlimpseSettings.glimpsesVisible
 					? Math.round(GLIMPSE_ALPHA * fade * arrivalFade * distanceFade * departFade)

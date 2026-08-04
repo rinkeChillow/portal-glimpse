@@ -148,11 +148,12 @@ public final class TravelTracker {
 			abort("player took damage during the hold — releasing the loading screen");
 			return;
 		}
-		if (--arrivalTicksLeft <= 0) {
-			feedback(player, "Glimpse skipped — terrain wasn't ready in time", Formatting.GRAY);
-			abort("arrival portal / capture-radius chunks not ready in time");
-			return;
-		}
+		// Running out of time no longer throws the trip away. Waiting the full timeout and THEN skipping the
+		// capture is the worst of both: the player paid for the whole hold and got nothing, and the portal
+		// stays blank until they happen to travel again. Past the deadline we take what has loaded — a glimpse
+		// with some unloaded distance in it beats no glimpse at all, and the next trip refreshes it anyway.
+		boolean timedOut = --arrivalTicksLeft <= 0;
+
 		PortalStore store = PortalDetection.store();
 		if (store == null) {
 			abort("no portal store");
@@ -164,7 +165,7 @@ public final class TravelTracker {
 
 		// Respect vanilla's own "terrain is ready" condition before capturing (§12 item 9): the
 		// screen's shouldClose supplier is exactly what vanilla would use to dismiss it.
-		if (client.currentScreen instanceof DownloadingTerrainScreen screen
+		if (!timedOut && client.currentScreen instanceof DownloadingTerrainScreen screen
 				&& !((DownloadingTerrainScreenAccessor) screen).portalglimpse$getShouldClose().getAsBoolean()) {
 			return;
 		}
@@ -179,13 +180,18 @@ public final class TravelTracker {
 			}
 		}
 		if (destination == null) {
+			if (timedOut) {
+				// Nothing to photograph — no portal was ever identified, so there is no partial result to keep.
+				feedback(player, "Glimpse skipped — no portal found on arrival", Formatting.GRAY);
+				abort("arrival portal never resolved before the timeout");
+			}
 			return; // registration may still be in flight — keep waiting until timeout
 		}
 
 		// Hold the loading screen until the configured radius of chunks around the arrival portal has
 		// loaded, so the captured panorama shows real terrain instead of ungenerated void. The timeout
 		// still bounds the wait so it can never softlock.
-		if (!captureChunksLoaded(client, destination)) {
+		if (!timedOut && !captureChunksLoaded(client, destination)) {
 			return;
 		}
 
@@ -193,6 +199,10 @@ public final class TravelTracker {
 		if (origin == null) {
 			abort("origin record vanished");
 			return;
+		}
+
+		if (timedOut) {
+			feedback(player, "Glimpse captured early — terrain wasn't fully loaded", Formatting.GRAY);
 		}
 
 		relink(store, origin, destination);

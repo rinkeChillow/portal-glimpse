@@ -103,6 +103,50 @@ public final class PortalStorage {
 	}
 
 	/**
+	 * Hand a reshaped portal's captured images to its replacement, then delete the old folder.
+	 *
+	 * <p>The images live in a per-UUID directory, and §5.3 gives a resized portal a NEW UUID — so inheriting
+	 * only the record's capture FLAGS would leave the new record claiming a glimpse whose PNGs sit in a folder
+	 * nobody looks in. The files have to move with it.
+	 */
+	public static void inheritCaptures(Path base, PortalRecord from, PortalRecord to) {
+		Path src = base.resolve(from.id.toString());
+		Path dst = base.resolve(to.id.toString());
+		try {
+			if (!Files.isDirectory(src)) {
+				return;
+			}
+			Files.createDirectories(dst);
+			try (java.util.stream.Stream<Path> files = Files.list(src)) {
+				for (Path f : files.toList()) {
+					if (f.getFileName().toString().endsWith(".png")) {
+						Files.move(f, dst.resolve(f.getFileName()), StandardCopyOption.REPLACE_EXISTING);
+					}
+				}
+			}
+		} catch (IOException e) {
+			PortalGlimpse.LOGGER.warn("Portal Glimpse: could not carry captures from {} to {}",
+					from.id, to.id, e);
+		}
+	}
+
+	/** Remove a record's folder entirely — for a shape that no longer exists after a reshape. */
+	public static void delete(Path base, PortalRecord record) {
+		Path dir = base.resolve(record.id.toString());
+		try (java.util.stream.Stream<Path> files = Files.walk(dir)) {
+			files.sorted(java.util.Comparator.reverseOrder()).forEach(f -> {
+				try {
+					Files.deleteIfExists(f);
+				} catch (IOException ignored) {
+					// best effort; a leftover file is harmless, the record is gone from the store
+				}
+			});
+		} catch (IOException e) {
+			PortalGlimpse.LOGGER.warn("Portal Glimpse: could not delete stale portal folder {}", dir, e);
+		}
+	}
+
+	/**
 	 * Write a record atomically so a crash can't leave a half-written portal.json (§3.5).
 	 *
 	 * @return true if the record was written successfully.

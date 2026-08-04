@@ -61,6 +61,7 @@ public abstract class GameMenuScreenMixin extends Screen {
 			x = 8; // Advancements missing (renamed, or a mod replaced the screen) — fall back to the corner.
 			y = 8;
 		}
+		// x/y are the ANCHOR; PortalMenuButton adds the player's saved drag offset on top of it.
 		addDrawableChild(new PortalMenuButton(x, y, (GameMenuScreen) (Object) this));
 	}
 }

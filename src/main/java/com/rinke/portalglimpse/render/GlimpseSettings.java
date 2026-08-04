@@ -23,8 +23,35 @@ public final class GlimpseSettings {
 	public static int autoCaptureCooldownMinutes = 5;
 
 	/** Chunks (each direction) that must be loaded around the arrival portal before an auto capture —
-	 * the loading screen is held until they are, so the panorama shows real terrain, not void. */
+	 * the loading screen is held until they are, so the panorama shows real terrain, not void.
+	 *
+	 * <p>Kept at or below the player's render distance by {@link #clampCaptureRadius}: waiting on chunks
+	 * beyond it means waiting for chunks the game will never load, so the hold would just time out. */
 	public static int captureChunkRadius = 4;
+
+	/** Last render distance seen, so the clamp only reacts when it actually changes. */
+	private static int lastViewDistance = -1;
+
+	/**
+	 * Follow the render distance DOWN, never back up.
+	 *
+	 * <p>Drop render distance to 4 and a capture radius of 8 becomes 4, because 8 is no longer reachable.
+	 * Raise it back to 16 and the radius STAYS at 4 — the lower number is now the player's setting, and
+	 * silently restoring a value they didn't choose would be worse than leaving it where it landed.
+	 *
+	 * @return true if the radius was lowered, so the caller can persist it
+	 */
+	public static boolean clampCaptureRadius(int viewDistance) {
+		if (viewDistance == lastViewDistance) {
+			return false;
+		}
+		lastViewDistance = viewDistance;
+		if (captureChunkRadius > viewDistance) {
+			captureChunkRadius = viewDistance;
+			return true;
+		}
+		return false;
+	}
 
 	/** Master toggle for the glimpse view layer (H). The modded veil renders either way. */
 	public static boolean glimpsesVisible = true;
@@ -54,6 +81,12 @@ public final class GlimpseSettings {
 	 * left alone, and reaches the settings through Mod Menu instead. Read when the pause menu is built. */
 	public static boolean menuButton = true;
 
+	/** Where the pause-menu portal sits relative to its anchor beside Advancements, set by right-dragging it.
+	 * Stored as an OFFSET rather than absolute coordinates so it keeps its place relative to the menu when the
+	 * window is resized or another mod changes the button grid. */
+	public static int menuButtonOffsetX;
+	public static int menuButtonOffsetY;
+
 	/** Whether the veil (the portal swirl) is drawn at all while a shaderpack is active. DEFAULT OFF.
 	 *
 	 * <p>Under shaders the glimpse is the point: the destination comes through shader-lit and reads as a real
@@ -69,6 +102,11 @@ public final class GlimpseSettings {
 	 * {@link RttVeilMode} for what each mode trades away. Cycled live with Numpad * so the two can be compared
 	 * side by side in the same portal. */
 	public static RttVeilMode rttVeilMode = RttVeilMode.TERRAIN;
+
+	/** Distance at which the flat postcard has fully faded IN as you back away from a portal — i.e. where
+	 * you first see it. Walking closer crossfades it out over the next 10 blocks so the parallax panorama
+	 * behind it takes over cleanly. Raising this makes the postcard appear from further out. */
+	public static int postcardFadeDistance = 10;
 
 	/** Half field-of-view (degrees) the portal shows of the destination panorama (§4.1). The sphere
 	 * radius is derived per-frame so the destination scales with the portal (no telephoto) as you move.

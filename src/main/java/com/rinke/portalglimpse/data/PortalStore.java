@@ -1,8 +1,11 @@
 package com.rinke.portalglimpse.data;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -99,6 +102,29 @@ public class PortalStore {
 		}
 
 		PortalRecord record = PortalRecord.create(id, dimension, anchor, interior, axis);
+		// A reshaped portal is the same doorway to the player, so carry the old shape's glimpse across rather
+		// than dropping to vanilla until they travel again — and DROP the old record, because leaving two
+		// records claiming overlapping blocks is what let a stale sub-shape keep painting half the opening.
+		List<PortalRecord> superseded = findOverlapping(id, interior);
+		boolean inherited = false;
+		for (PortalRecord old : superseded) {
+			// Only the first (largest overlap) hands over its capture; the rest are merely cleared away, or
+			// two merged portals would fight over the same slot.
+			if (!inherited) {
+				PortalStorage.inheritCaptures(baseDir, old, record);
+				record.auto.copyFrom(old.auto);
+				record.manual.copyFrom(old.manual);
+				record.linkedId = old.linkedId;
+				inherited = true;
+				PortalGlimpse.LOGGER.info("Portal Glimpse: portal {} was rebuilt as {} blocks — capture carried "
+						+ "over", old.id, interior.size());
+			}
+			records.remove(old.id);
+			for (BlockPos pos : old.interior) {
+				positionIndex.remove(pos.asLong());
+			}
+			PortalStorage.delete(baseDir, old);
+		}
 		records.put(id, record);
 		claim(interior, record);
 		boolean saved = PortalStorage.save(baseDir, record);
@@ -111,6 +137,37 @@ public class PortalStore {
 	public void save(PortalRecord record) {
 		record.updatedAt = System.currentTimeMillis();
 		PortalStorage.save(baseDir, record);
+	}
+
+	/**
+	 * Every existing record whose blocks OVERLAP this new shape — i.e. the same doorway, rebuilt.
+	 *
+	 * <p>Overlap, not containment. An earlier version required the old shape to be a strict SUBSET of the new
+	 * one, which only ever matched a portal being made BIGGER: shrink it, reshape it sideways, or merge two
+	 * into one and nothing matched, so the capture was silently lost and the portal went vanilla. Any portal
+	 * block shared with a previous record means it is the same opening as far as the player is concerned.
+	 *
+	 * <p>Ordered best-inheritance-first: most shared blocks wins, and a tie goes to the more recently updated
+	 * record. That decides sensibly when two captured portals are merged into one — the bigger contributor's
+	 * view is the one that survives.
+	 */
+	private List<PortalRecord> findOverlapping(UUID newId, List<BlockPos> interior) {
+		Map<UUID, Integer> shared = new HashMap<>();
+		Map<UUID, PortalRecord> byId = new HashMap<>();
+		for (BlockPos pos : interior) {
+			PortalRecord owner = positionIndex.get(pos.asLong());
+			if (owner == null || owner.id.equals(newId)) {
+				continue;
+			}
+			shared.merge(owner.id, 1, Integer::sum);
+			byId.put(owner.id, owner);
+		}
+		List<PortalRecord> out = new ArrayList<>(byId.values());
+		out.sort((a, b) -> {
+			int cmp = Integer.compare(shared.get(b.id), shared.get(a.id));
+			return cmp != 0 ? cmp : Long.compare(b.updatedAt, a.updatedAt);
+		});
+		return out;
 	}
 
 	private void claim(List<BlockPos> interior, PortalRecord record) {

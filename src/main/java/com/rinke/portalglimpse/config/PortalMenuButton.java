@@ -7,6 +7,10 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.narration.NarrationMessageBuilder;
 import net.minecraft.client.gui.widget.ClickableWidget;
 import net.minecraft.client.texture.Sprite;
+import com.rinke.portalglimpse.render.GlimpseSettings;
+
+import org.lwjgl.glfw.GLFW;
+
 import net.minecraft.text.Text;
 
 /**
@@ -46,10 +50,58 @@ public class PortalMenuButton extends ClickableWidget {
 	public static final int WIDGET_H = FRAME_H + 2;
 
 	private final Screen parent;
+	/** Anchor position — where the button sits with a zero offset, i.e. beside Advancements. Dragging is
+	 * stored relative to this, so the button keeps its place when the menu grid moves. */
+	private final int baseX;
+	private final int baseY;
+	private boolean dragging;
+	private int grabDx;
+	private int grabDy;
+	private boolean rightWasDown;
 
 	public PortalMenuButton(int x, int y, Screen parent) {
-		super(x, y, WIDGET_W, WIDGET_H, Text.translatable("portal-glimpse.menu.button"));
+		super(x + GlimpseSettings.menuButtonOffsetX, y + GlimpseSettings.menuButtonOffsetY,
+				WIDGET_W, WIDGET_H, Text.translatable("portal-glimpse.menu.button"));
 		this.parent = parent;
+		this.baseX = x;
+		this.baseY = y;
+	}
+
+	/**
+	 * Right-hold to drag the button somewhere else; left-click still opens the settings.
+	 *
+	 * <p>Polls the mouse button straight from GLFW rather than using {@code mouseDragged}, because vanilla's
+	 * {@code ParentElement.mouseDragged} only forwards drags for button 0 — a right-drag never reaches a child
+	 * widget at all, so there is nothing to override.
+	 */
+	private void updateDrag(int mouseX, int mouseY) {
+		MinecraftClient client = MinecraftClient.getInstance();
+		if (client == null || client.getWindow() == null) {
+			return;
+		}
+		boolean down = GLFW.glfwGetMouseButton(client.getWindow().getHandle(),
+				GLFW.GLFW_MOUSE_BUTTON_RIGHT) == GLFW.GLFW_PRESS;
+
+		if (down && !rightWasDown && isMouseOver(mouseX, mouseY)) {
+			dragging = true;
+			grabDx = mouseX - getX();
+			grabDy = mouseY - getY();
+		} else if (!down && dragging) {
+			dragging = false;
+			GlimpseConfig config = GlimpseConfig.get();
+			config.menuButtonOffsetX = getX() - baseX;
+			config.menuButtonOffsetY = getY() - baseY;
+			config.save();
+		}
+		rightWasDown = down;
+
+		if (dragging) {
+			// Clamped to the screen so it can't be dragged off and lost with no way to get it back.
+			int maxX = client.getWindow().getScaledWidth() - getWidth();
+			int maxY = client.getWindow().getScaledHeight() - getHeight();
+			setX(Math.max(0, Math.min(maxX, mouseX - grabDx)));
+			setY(Math.max(0, Math.min(maxY, mouseY - grabDy)));
+		}
 	}
 
 	@Override
@@ -71,7 +123,8 @@ public class PortalMenuButton extends ClickableWidget {
 		Sprite portal = client.getBlockRenderManager().getModels()
 				.getModelParticleSprite(Blocks.NETHER_PORTAL.getDefaultState());
 
-		boolean lit = isHovered() || isFocused();
+		updateDrag(mouseX, mouseY);
+		boolean lit = isHovered() || isFocused() || dragging;
 
 		// No button background — the portal IS the button. Hovering just outlines it, the way a focused
 		// vanilla widget is outlined, so it announces itself as pressable without a grey slab appearing

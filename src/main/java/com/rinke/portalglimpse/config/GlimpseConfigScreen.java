@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import com.rinke.portalglimpse.data.GlimpseStorage;
 import com.rinke.portalglimpse.data.PortalRecord;
 import com.rinke.portalglimpse.data.PortalStore;
 import com.rinke.portalglimpse.detect.PortalDetection;
@@ -33,8 +34,33 @@ public final class GlimpseConfigScreen {
 	private GlimpseConfigScreen() {
 	}
 
+	/** Total bytes across every world/server, or -1 while the scan is still running. */
+	private static volatile long cachedUsage = -1;
+	/** Guards the scan, because the label is now read EVERY FRAME — without this, a fresh disk walk would be
+	 * queued on the IO pool on every frame until the first one happened to finish. */
+	private static final java.util.concurrent.atomic.AtomicBoolean SCANNING =
+			new java.util.concurrent.atomic.AtomicBoolean();
+
+	private static Text storageSummary() {
+		long bytes = cachedUsage;
+		if (bytes < 0) {
+			if (SCANNING.compareAndSet(false, true)) {
+				net.minecraft.util.Util.getIoWorkerExecutor().execute(() -> {
+					try {
+						cachedUsage = GlimpseStorage.totalBytes(GlimpseStorage.scan());
+					} finally {
+						SCANNING.set(false);
+					}
+				});
+			}
+			return Text.translatable("portal-glimpse.config.storage.scanning");
+		}
+		return Text.translatable("portal-glimpse.config.storage", GlimpseStorage.format(bytes));
+	}
+
 	public static Screen create(Screen parent) {
 		GlimpseConfig config = GlimpseConfig.get();
+		cachedUsage = -1; // re-measure each time the screen is opened
 
 		ConfigBuilder builder = ConfigBuilder.create()
 				.setParentScreen(parent)
@@ -137,6 +163,15 @@ public final class GlimpseConfigScreen {
 				.setSaveConsumer(v -> config.panoramaFovDegrees = v)
 				.build());
 
+		general.addEntry(entry.startIntSlider(
+						Text.translatable("portal-glimpse.config.postcardFade"),
+						config.postcardFadeDistance, 0, 60)
+				.setDefaultValue(10)
+				.setTextGetter(v -> Text.literal(v + " blocks"))
+				.setTooltip(Text.translatable("portal-glimpse.config.postcardFade.tooltip"))
+				.setSaveConsumer(v -> config.postcardFadeDistance = v)
+				.build());
+
 		// Veil opacity is stored 0..255 but presented as a friendly 0..100%, split by the dimension
 		// being VIEWED (the swirl reads differently over a Nether vs Overworld view). Each slider gets
 		// a live preview box above it (a portal-shaped panorama with the swirl at the current value).
@@ -180,22 +215,23 @@ public final class GlimpseConfigScreen {
 				.setSaveConsumer(v -> config.autoCaptureCooldownMinutes = v)
 				.build());
 
+		// The slider tops out at your CURRENT render distance rather than a fixed 8: asking to wait for chunks
+		// beyond it just waits for chunks the game will never load. Reopen the screen after changing render
+		// distance to widen the range again.
+		int viewDistance = MinecraftClient.getInstance().options.getClampedViewDistance();
 		general.addEntry(entry.startIntSlider(
 						Text.translatable("portal-glimpse.config.captureRadius"),
-						config.captureChunkRadius, 0, 8)
-				.setDefaultValue(4)
-				.setTextGetter(v -> {
-					int viewDistance = MinecraftClient.getInstance().options.getClampedViewDistance();
-					// Warn (but still allow) when the radius exceeds render distance — those chunks never
-					// load, so the wait would be capped there anyway.
-					return v > viewDistance
-							? Text.translatable("portal-glimpse.config.captureRadius.overRender", v, viewDistance)
-									.formatted(Formatting.GOLD)
-							: Text.literal(v + " chunks");
-				})
+						Math.min(config.captureChunkRadius, viewDistance), 0, viewDistance)
+				.setDefaultValue(Math.min(4, viewDistance))
+				.setTextGetter(v -> Text.literal(v + " chunks"))
 				.setTooltip(Text.translatable("portal-glimpse.config.captureRadius.tooltip"))
 				.setSaveConsumer(v -> config.captureChunkRadius = v)
 				.build());
+
+		// Disk usage + clean-up. Measured once when the screen opens, off-thread, since it walks every save
+		// folder; the label just shows a dash until it lands.
+		general.addEntry(new CleanupButtonEntry(GlimpseConfigScreen::storageSummary,
+				Text.translatable("portal-glimpse.config.storage.button"), CleanupButtonEntry::openCleanup));
 
 		// The two player keybinds, also editable here (they remain in the vanilla Controls menu too).
 		general.addEntry(entry.fillKeybindingField(

@@ -33,6 +33,8 @@ public final class GlimpseConfig {
 	public boolean glimpsesVisible = true;
 	public boolean entityOverPanorama = true; // show players standing in a portal, through the panorama
 	public boolean menuButton = true;        // the portal shortcut in the pause menu that opens these settings
+	public int menuButtonOffsetX;            // right-drag offset from its anchor beside Advancements
+	public int menuButtonOffsetY;
 	public ShaderRenderMethod shaderRenderMethod = ShaderRenderMethod.OVERLAY; // how the glimpse draws under shaders
 	public boolean godRayOccluder = true;    // RTT+shaders: hidden terrain cage that blocks god rays through the glimpse
 	public boolean shaderVeil = false;       // shaders only: draw the swirl over the glimpse. Off — the shader-lit
@@ -42,7 +44,8 @@ public final class GlimpseConfig {
 	public int netherVeilAlpha = 51;         // 0..255 (~20%) — Nether view, seen from the Overworld
 	public int overworldVeilAlpha = 102;     // 0..255 (~40%) — Overworld view, seen from the Nether
 	public int autoCaptureCooldownMinutes = 5; // 0..60 (0 = every eligible travel)
-	public int captureChunkRadius = 4;       // 0..8 chunks each direction to load before auto capture
+	public int postcardFadeDistance = 10;    // blocks out at which the flat postcard has fully faded in
+	public int captureChunkRadius = 4;       // chunks each direction to load before auto capture; never above render distance
 
 	// UI-only state (not a render setting): whether the "drag to look around" hint has been dismissed.
 	public boolean previewHintSeen = false;
@@ -94,6 +97,8 @@ public final class GlimpseConfig {
 		GlimpseSettings.glimpsesVisible = glimpsesVisible;
 		GlimpseSettings.entityOverPanorama = entityOverPanorama;
 		GlimpseSettings.menuButton = menuButton;
+		GlimpseSettings.menuButtonOffsetX = menuButtonOffsetX;
+		GlimpseSettings.menuButtonOffsetY = menuButtonOffsetY;
 		GlimpseSettings.shaderRenderMethod = shaderRenderMethod != null ? shaderRenderMethod : ShaderRenderMethod.RTT;
 		GlimpseSettings.godRayOccluder = godRayOccluder;
 		GlimpseSettings.shaderVeil = shaderVeil;
@@ -102,6 +107,7 @@ public final class GlimpseConfig {
 		GlimpseSettings.netherVeilAlpha = netherVeilAlpha;
 		GlimpseSettings.overworldVeilAlpha = overworldVeilAlpha;
 		GlimpseSettings.autoCaptureCooldownMinutes = autoCaptureCooldownMinutes;
+		GlimpseSettings.postcardFadeDistance = postcardFadeDistance;
 		GlimpseSettings.captureChunkRadius = captureChunkRadius;
 	}
 
@@ -111,6 +117,7 @@ public final class GlimpseConfig {
 		panoramaFovDegrees = Math.max(20.0F, Math.min(60.0F, panoramaFovDegrees));
 		rttMotionPredictionPercent = Math.max(0, Math.min(100, rttMotionPredictionPercent));
 		autoCaptureCooldownMinutes = Math.max(0, Math.min(60, autoCaptureCooldownMinutes));
-		captureChunkRadius = Math.max(0, Math.min(8, captureChunkRadius));
+		captureChunkRadius = Math.max(0, Math.min(32, captureChunkRadius));
+		postcardFadeDistance = Math.max(0, Math.min(60, postcardFadeDistance));
 	}
 }
