@@ -1,5 +1,6 @@
 package com.rinke.portalglimpse.render;
 
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 
@@ -38,7 +39,11 @@ public final class GlimpseWorldRendering {
 				GlimpseRenderers.get().renderInEntityPass(context);
 			}
 		});
+		// Re-issue rebuilds for occluder positions whose chunk may not have re-meshed — see TerrainOverride.
+		// Does nothing at all unless something was removed recently.
+		ClientTickEvents.END_CLIENT_TICK.register(TerrainOverride::tick);
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(() -> {
+			TerrainOverride.reset();
 			GlimpseTextures.clear(client);
 			PanoramaTextures.clear(client);
 			GlimpseRenderState.clear(client);

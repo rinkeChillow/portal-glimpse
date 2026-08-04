@@ -1,6 +1,7 @@
 package com.rinke.portalglimpse.render;
 
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -30,6 +31,22 @@ public final class TerrainOverride {
 
 	private static volatile Map<Long, BlockState> portal = Collections.emptyMap();
 
+	/** Positions an override was REMOVED from, each with the client tick by which its rebuild must have been
+	 * re-issued. Only removals are tracked, because only removals can be SEEN: a dropped rebuild for an ADDED
+	 * position just means no occluder there (the god rays come back — invisible unless you look for it), while
+	 * a dropped rebuild for a REMOVED one leaves the black occluder meshed in mid-air until some unrelated
+	 * block update happens to rebuild that section. */
+	private static final Map<Long, Integer> pendingRemovals = new HashMap<>();
+	/** Cap, so a long run of churn can't grow the map without bound. */
+	private static final int MAX_PENDING = 4096;
+	/** Client ticks a removed position is re-checked for. An ABSOLUTE deadline per position, not a countdown:
+	 * the occluder set changes almost every frame while a portal is on screen, so any timer that restarted on
+	 * each new removal would be starved forever and never fire. */
+	private static final int RETRY_TICKS = 40;
+	/** How often the pending set is re-issued while it has entries. */
+	private static final int RETRY_INTERVAL_TICKS = 10;
+	private static int tickCounter;
+
 	private TerrainOverride() {
 	}
 
@@ -53,8 +70,51 @@ public final class TerrainOverride {
 		intersection.retainAll(desired.keySet());
 		changed.removeAll(intersection);
 
+		// Anything leaving the map must stop being meshed, and one scheduleBlockRenders is not reliable for
+		// that: it only reaches sections the renderer currently holds built, so a removal made while crossing
+		// a chunk boundary — or while that section is mid-rebuild or not yet built — is silently dropped.
+		Set<Long> removed = new HashSet<>(current.keySet());
+		removed.removeAll(desired.keySet());
+		if (!removed.isEmpty()) {
+			if (pendingRemovals.size() + removed.size() > MAX_PENDING) {
+				pendingRemovals.clear();
+			}
+			int deadline = tickCounter + RETRY_TICKS;
+			for (long pos : removed) {
+				pendingRemovals.put(pos, deadline);
+			}
+		}
+
 		portal = desired.isEmpty() ? Collections.emptyMap() : Map.copyOf(desired);
 		reschedule(client, changed);
+	}
+
+	/**
+	 * Re-issue the rebuild for recently removed positions until their deadline passes.
+	 *
+	 * <p>Deliberately does NOT touch the renderer globally — no {@code worldRenderer.reload()}. Only the
+	 * specific positions are rescheduled, so this cannot interfere with terrain loading or with
+	 * {@link GlimpseRenderState}'s own block-hiding sync.
+	 */
+	public static void tick(MinecraftClient client) {
+		tickCounter++;
+		if (pendingRemovals.isEmpty() || tickCounter % RETRY_INTERVAL_TICKS != 0) {
+			return;
+		}
+		final int now = tickCounter;
+		pendingRemovals.values().removeIf(deadline -> deadline <= now);
+		if (pendingRemovals.isEmpty()) {
+			return;
+		}
+		reschedule(client, new HashSet<>(pendingRemovals.keySet()));
+	}
+
+	/** Drop the injected set and any pending work — for LEAVING a world, where keeping either would apply one
+	 * world's overrides to another's terrain. NOT called on join: the renderer is at its most fragile while a
+	 * world is still loading, and the per-frame sync re-establishes the correct set on the first frame anyway. */
+	public static void reset() {
+		portal = Collections.emptyMap();
+		pendingRemovals.clear();
 	}
 
 	public static void clearPortal(MinecraftClient client) {
