@@ -32,6 +32,8 @@ public final class GlimpseConfig {
 	// Mirrors of the runtime fields in GlimpseSettings that players are allowed to set.
 	public boolean glimpsesVisible = true;
 	public boolean entityOverPanorama = true; // show players standing in a portal, through the panorama
+	public boolean detectionChat = true;     // chat line when a portal is detected
+	public boolean creeperWarning = true;    // flash "Creeper!" when one cancels a capture
 	public boolean menuButton = true;        // the portal shortcut in the pause menu that opens these settings
 	public int menuButtonOffsetX;            // right-drag offset from its anchor beside Advancements
 	public int menuButtonOffsetY;
@@ -96,6 +98,8 @@ public final class GlimpseConfig {
 	public void apply() {
 		GlimpseSettings.glimpsesVisible = glimpsesVisible;
 		GlimpseSettings.entityOverPanorama = entityOverPanorama;
+		GlimpseSettings.detectionChat = detectionChat;
+		GlimpseSettings.creeperWarning = creeperWarning;
 		GlimpseSettings.menuButton = menuButton;
 		GlimpseSettings.menuButtonOffsetX = menuButtonOffsetX;
 		GlimpseSettings.menuButtonOffsetY = menuButtonOffsetY;

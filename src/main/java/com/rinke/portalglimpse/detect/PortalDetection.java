@@ -35,8 +35,10 @@ import net.minecraft.world.chunk.WorldChunk;
  */
 public final class PortalDetection {
 
-	/** Temporary: print detection/save events to chat so Phase 1 can be tested in-game. */
-	private static final boolean DEBUG_CHAT = true;
+	/** Print detection/save events to chat — a config option, on by default. */
+	private static boolean debugChat() {
+		return GlimpseSettings.detectionChat;
+	}
 
 	/** Proximity scan cadence and radius — catches portals lit inside already-loaded chunks. */
 	private static final int SCAN_INTERVAL_TICKS = 20;
@@ -149,7 +151,7 @@ public final class PortalDetection {
 	}
 
 	private static void announce(PortalStore.RegisterResult result) {
-		if (!DEBUG_CHAT) {
+		if (!debugChat()) {
 			return;
 		}
 		ClientPlayerEntity player = MinecraftClient.getInstance().player;
@@ -157,8 +159,7 @@ public final class PortalDetection {
 			return;
 		}
 		// Coordinates and block count are developer detail — they only mean something while diagnosing a
-		// detection, and reading them to every player who lights a portal is noise. Debug mode gets the full
-		// line; everyone else just gets told the portal was picked up.
+		// detection, so they ride along only in /pgdebug.
 		BlockPos anchor = result.record().anchor;
 		String detail = GlimpseSettings.debugMode
 				? " at " + anchor.getX() + ", " + anchor.getY() + ", " + anchor.getZ()

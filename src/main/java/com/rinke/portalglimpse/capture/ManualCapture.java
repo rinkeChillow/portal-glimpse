@@ -5,6 +5,8 @@ import org.lwjgl.glfw.GLFW;
 import com.rinke.portalglimpse.data.PortalRecord;
 import com.rinke.portalglimpse.data.PortalStore;
 import com.rinke.portalglimpse.detect.PortalDetection;
+import com.rinke.portalglimpse.render.GlimpseSettings;
+import com.rinke.portalglimpse.render.IrisCompat;
 import com.rinke.portalglimpse.render.ManualCaptureFlash;
 
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
@@ -38,6 +40,12 @@ public final class ManualCapture {
 
 	private static ActionResult onUseBlock(PlayerEntity player, World world, Hand hand, BlockHitResult hit) {
 		if (!world.isClient || hand != Hand.MAIN_HAND) {
+			return ActionResult.PASS;
+		}
+		// Behind /pgdebug while it's broken, so a player can't stumble into it with a stray ctrl+shift+click.
+		// Also vanilla-only: under a shaderpack the capture runs the multi-frame settle path, which manual
+		// capture does not currently drive correctly — travel capture is the supported route there.
+		if (!GlimpseSettings.debugMode || IrisCompat.shadersActive()) {
 			return ActionResult.PASS;
 		}
 		MinecraftClient client = MinecraftClient.getInstance();

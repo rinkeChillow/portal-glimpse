@@ -64,5 +64,13 @@
 	"portal-glimpse.cleanup.delete": "Clean Up",
 	"portal-glimpse.cleanup.confirm": "Click again to delete %s",
 	"portal-glimpse.cleanup.warning": "This cannot be undone.",
-	"portal-glimpse.config.storage.button": "Clean Up…"
+	"portal-glimpse.config.storage.button": "Clean Up…",
+	"portal-glimpse.config.detectionChat": "Portal detected message",
+	"portal-glimpse.config.detectionChat.tooltip": "Chat line when a portal is found.",
+	"portal-glimpse.creeperWarning": "Creeper!",
+	"portal-glimpse.config.creeperWarning": "Creeper warning",
+	"portal-glimpse.config.creeperWarning.tooltip": "Flash a warning when one cancels a capture.",
+	"portal-glimpse.loading.creeperPresent": "Creeper?",
+	"portal-glimpse.loading.creeperApproaching": "Creeper is approaching!",
+	"portal-glimpse.loading.creeperLingering": "The Creeper is chilling around"
 }

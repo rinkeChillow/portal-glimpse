@@ -2,6 +2,7 @@ package com.rinke.portalglimpse;
 
 import com.rinke.portalglimpse.capture.CaptureManager;
 import com.rinke.portalglimpse.capture.ManualCapture;
+import com.rinke.portalglimpse.render.CreeperWarning;
 import com.rinke.portalglimpse.config.GlimpseConfig;
 import com.rinke.portalglimpse.config.GlimpseHotkeys;
 import com.rinke.portalglimpse.config.PreviewOverlay;
@@ -45,6 +46,7 @@ public class PortalGlimpseClient implements ClientModInitializer {
 		TravelTracker.register();
 
 		// Draw glimpses on portal surfaces every frame (§4): postcard under the living veil.
+		CreeperWarning.register();
 		GlimpseWorldRendering.register();
 		GlimpseKeybinds.register();
 

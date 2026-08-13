@@ -91,6 +91,20 @@ public final class GlimpseConfigScreen {
 				.build());
 
 		general.addEntry(entry.startBooleanToggle(
+						Text.translatable("portal-glimpse.config.detectionChat"), config.detectionChat)
+				.setDefaultValue(true)
+				.setTooltip(Text.translatable("portal-glimpse.config.detectionChat.tooltip"))
+				.setSaveConsumer(v -> config.detectionChat = v)
+				.build());
+
+		general.addEntry(entry.startBooleanToggle(
+						Text.translatable("portal-glimpse.config.creeperWarning"), config.creeperWarning)
+				.setDefaultValue(true)
+				.setTooltip(Text.translatable("portal-glimpse.config.creeperWarning.tooltip"))
+				.setSaveConsumer(v -> config.creeperWarning = v)
+				.build());
+
+		general.addEntry(entry.startBooleanToggle(
 						Text.translatable("portal-glimpse.config.menuButton"), config.menuButton)
 				.setDefaultValue(true)
 				.setTooltip(Text.translatable("portal-glimpse.config.menuButton.tooltip"))

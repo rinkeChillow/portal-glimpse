@@ -2,7 +2,13 @@ package com.rinke.portalglimpse.travel;
 
 import java.util.UUID;
 
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import com.rinke.portalglimpse.PortalGlimpse;
+import com.rinke.portalglimpse.render.CreeperWarning;
 import com.rinke.portalglimpse.capture.CaptureManager;
 import com.rinke.portalglimpse.data.PortalRecord;
 import com.rinke.portalglimpse.data.PortalStore;
@@ -19,6 +25,10 @@ import net.minecraft.client.gui.screen.DownloadingTerrainScreen;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.text.Text;
+import net.minecraft.entity.mob.CreeperEntity;
+import net.minecraft.util.math.Box;
+import net.minecraft.util.math.Vec3d;
+import net.minecraft.sound.SoundEvents;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
@@ -61,7 +71,57 @@ public final class TravelTracker {
 	private static int arrivalTicksLeft;
 
 	/** Player health when the hold began — if it drops, the player is under attack: release the screen. */
-	private static float holdStartHealth = -1.0F;
+	/** Whether the player was already flinching last tick, so only the START of a hit counts. */
+	private static boolean wasHurt;
+
+	/** How far to watch for a creeper. Wide, because the point is to react while it is still walking. */
+	private static final double CREEPER_WATCH_RADIUS = 16.0;
+
+	/** How directly a creeper must face the player to count as tracking them. cos(50°) — generous, since a
+	 * mob walking toward you weaves rather than staring straight down the line. */
+	private static final double CREEPER_FACING_DOT = 0.64;
+
+	/** Blocks per tick a creeper must be closing to count as approaching. A creeper chasing moves ~0.2/tick;
+	 * this is well under that but clear of the jitter of a mob milling about. */
+	private static final double CREEPER_CLOSING_PER_TICK = 0.03;
+
+	/** Ticks of facing-and-closing before we believe it. One tick of coincidence is not aggro.
+	 *
+	 * <p>The streak DECAYS by one on a bad tick rather than resetting to zero — see the note in creeperCheck
+	 * about lag. Resetting meant a creeper that stuttered had to earn the full count again from scratch. */
+	private static final int CREEPER_CONFIRM_TICKS = 3;
+
+	/** What the nearby creepers are up to, for the loading screen to narrate. */
+	public enum CreeperMood {
+		/** None in range. */
+		NONE,
+		/** One just turned up — has it noticed you? */
+		PRESENT,
+		/** Been there a while and shows no interest. */
+		LINGERING,
+		/** Facing you and closing. */
+		APPROACHING
+	}
+
+	private static volatile CreeperMood creeperMood = CreeperMood.NONE;
+
+	/** Ticks a creeper can be around, not approaching, before it counts as merely loitering. */
+	private static final int CREEPER_LINGER_TICKS = 50;
+	/** How long "Creeper is approaching!" stays up before the hold actually breaks — long enough to read. */
+	private static final long CREEPER_APPROACH_GRACE_MS = 700;
+
+	private static int creeperSeenTicks;
+	private static long approachingSince;
+
+	/** For the loading screen. */
+	public static CreeperMood creeperMood() {
+		return creeperMood;
+	}
+
+	/** Creeper entity id → how many ticks running it has been closing on the player while facing them. */
+	private static final Map<Integer, Integer> creeperStreak = new HashMap<>();
+	/** Creeper entity id → its distance to the player last tick. */
+	private static final Map<Integer, Double> creeperLastDist = new HashMap<>();
 
 	/** Read by DownloadingTerrainScreenMixin (render thread) to keep the screen up. */
 	private static volatile boolean holdLoadingScreen;
@@ -98,7 +158,13 @@ public final class TravelTracker {
 			case IDLE -> trackOrigin(client, player, worldKey);
 			case AWAITING_ARRIVAL -> tickAwaitArrival(client, player, worldKey);
 			case CAPTURING -> {
-				// CaptureManager is driving; its callback returns us to IDLE.
+				// CaptureManager is driving; its callback returns us to IDLE — unless the player is being hurt,
+				// in which case the capture is abandoned and they get their screen back immediately.
+				if (tookDamage(player) || creeperPrimed(client, player)) {
+					CaptureManager.cancel(client);
+					playCancelSound(player);
+					abort("player attacked during the capture");
+				}
 			}
 		}
 	}
@@ -136,7 +202,7 @@ public final class TravelTracker {
 		arrivalTicksLeft = ARRIVAL_TIMEOUT_TICKS;
 		holdLoadingScreen = true;
 		ClientPlayerEntity player = MinecraftClient.getInstance().player;
-		holdStartHealth = player != null ? player.getHealth() : -1.0F;
+		wasHurt = player != null && player.hurtTime > 0;
 		PortalGlimpse.LOGGER.info("Portal Glimpse: portal travel {} -> {}, awaiting arrival portal",
 				originDimension, newWorldKey);
 	}
@@ -144,8 +210,9 @@ public final class TravelTracker {
 	private static void tickAwaitArrival(MinecraftClient client, ClientPlayerEntity player, Identifier worldKey) {
 		// If the player takes damage while we're holding the loading screen (a mob got to them during
 		// the chunk wait), release it immediately so they can defend themselves — don't hold + hurt.
-		if (holdStartHealth >= 0.0F && player.getHealth() < holdStartHealth - 0.01F) {
-			abort("player took damage during the hold — releasing the loading screen");
+		if (tookDamage(player) || creeperPrimed(client, player)) {
+			playCancelSound(player);
+			abort("player attacked during the hold — releasing the loading screen");
 			return;
 		}
 		// Running out of time no longer throws the trip away. Waiting the full timeout and THEN skipping the
@@ -275,6 +342,142 @@ public final class TravelTracker {
 		}
 	}
 
+	/**
+	 * The capture breaking, as a sound rather than a line of chat.
+	 *
+	 * <p>The respawn-anchor depletion — a thing that had charge losing it. No text: this is a breakage, and
+	 * a sound says it faster than a chat line.
+	 */
+	private static void playCancelSound(ClientPlayerEntity player) {
+		if (player == null) {
+			return;
+		}
+		player.playSound(SoundEvents.BLOCK_RESPAWN_ANCHOR_DEPLETE.value(), 0.7F, 1.0F);
+
+	}
+
+	/**
+	 * True on the tick the player starts taking damage — of any kind, from anything.
+	 *
+	 * <p>Reads {@code hurtTime}, the flinch timer the server sets on every damage event, rather than watching
+	 * the health NUMBER. Comparing health values can't tell a hit from a heal: eat or regenerate during the
+	 * hold and the baseline moves, so a later hit that leaves you above it goes unnoticed. It also misses
+	 * damage that costs no health at all — absorption, or a hit soaked entirely by armour. hurtTime fires for
+	 * all of it, and only the rising edge counts so one hit triggers once.
+	 */
+	private static boolean tookDamage(ClientPlayerEntity player) {
+		if (player == null) {
+			return false;
+		}
+		boolean hurt = player.hurtTime > 0;
+		boolean started = hurt && !wasHurt;
+		wasHurt = hurt;
+		return started;
+	}
+
+	/**
+	 * True when a creeper is coming for the player — ideally well before it starts to swell.
+	 *
+	 * <p>Once the fuse is lit it is already too late to do anything useful with the warning, so this tries to
+	 * catch the approach instead. The client is never told what a mob is TARGETING — {@code getTarget()} is
+	 * server-side and reads null here — and paths aren't synced either, so aggro has to be inferred from what
+	 * IS synced: where the creeper is and which way it is looking.
+	 *
+	 * <p>A creeper that is both facing the player and closing on them, for several ticks running, is chasing
+	 * them. Either signal alone is worthless — mobs drift toward you by accident and glance at you while
+	 * wandering — but together, sustained, they don't happen by chance. The streak requirement is what keeps
+	 * a creeper milling about near the portal from cancelling every arrival.
+	 *
+	 * <p>A lit fuse still counts, as a backstop for the case the approach was missed entirely (ignited by
+	 * flint and steel, or it rounded a corner already primed).
+	 */
+	private static boolean creeperPrimed(MinecraftClient client, ClientPlayerEntity player) {
+		creeperCheck(client, player);
+		if (creeperMood != CreeperMood.APPROACHING) {
+			approachingSince = 0L;
+			return false;
+		}
+		// Don't yank the screen the instant it's spotted — let "Creeper is approaching!" sit there long enough
+		// to be read, THEN break. A fraction of a second costs nothing and the warning is the point.
+		if (approachingSince == 0L) {
+			approachingSince = System.currentTimeMillis();
+			CreeperWarning.trigger();
+			return false;
+		}
+		return System.currentTimeMillis() - approachingSince >= CREEPER_APPROACH_GRACE_MS;
+	}
+
+	private static boolean creeperCheck(MinecraftClient client, ClientPlayerEntity player) {
+		if (client.world == null || player == null) {
+			return false;
+		}
+		Box area = player.getBoundingBox().expand(CREEPER_WATCH_RADIUS);
+		List<CreeperEntity> nearby =
+				client.world.getEntitiesByClass(CreeperEntity.class, area, c -> true);
+		Set<Integer> seen = new HashSet<>();
+		boolean aggro = false;
+
+		for (CreeperEntity creeper : nearby) {
+			int id = creeper.getId();
+			seen.add(id);
+
+			if (creeper.getFuseSpeed() > 0 || creeper.isIgnited()) {
+				aggro = true;
+				continue;
+			}
+
+			double dist = creeper.distanceTo(player);
+			Double last = creeperLastDist.put(id, dist);
+
+			// No movement AT ALL since last tick means no position update arrived, not that the creeper stood
+			// still. Under lag those are indistinguishable from here, and treating a missing update as "not
+			// approaching" is what let a stuttering creeper look harmless — so skip the tick entirely and
+			// keep whatever streak it had.
+			if (last != null && Math.abs(last - dist) < 1.0E-6) {
+				continue;
+			}
+
+			// Facing: its look direction against the direction to the player. Head yaw rather than body yaw —
+			// a mob turns its head to what it is tracking before the body follows.
+			Vec3d toPlayer = player.getPos().subtract(creeper.getPos());
+			double flat = Math.sqrt(toPlayer.x * toPlayer.x + toPlayer.z * toPlayer.z);
+			boolean facing = false;
+			if (flat > 0.001) {
+				double yawRad = Math.toRadians(creeper.headYaw);
+				double lookX = -Math.sin(yawRad);
+				double lookZ = Math.cos(yawRad);
+				facing = (lookX * (toPlayer.x / flat) + lookZ * (toPlayer.z / flat)) >= CREEPER_FACING_DOT;
+			}
+			boolean closing = last != null && (last - dist) >= CREEPER_CLOSING_PER_TICK;
+
+			// Decay instead of reset: one bad tick (a pause, a corner, a hiccup) shouldn't wipe the evidence,
+			// so a creeper that resumes its approach re-confirms almost immediately rather than starting over.
+			int prev = creeperStreak.getOrDefault(id, 0);
+			int streak = facing && closing ? prev + 1 : Math.max(0, prev - 1);
+			creeperStreak.put(id, streak);
+			if (streak >= CREEPER_CONFIRM_TICKS) {
+				aggro = true;
+			}
+		}
+
+		// Forget creepers that wandered out of range, so a returning one starts its streak from scratch.
+		creeperStreak.keySet().retainAll(seen);
+		creeperLastDist.keySet().retainAll(seen);
+
+		if (aggro) {
+			creeperMood = CreeperMood.APPROACHING;
+		} else if (nearby.isEmpty()) {
+			creeperSeenTicks = 0;
+			creeperMood = CreeperMood.NONE;
+		} else {
+			creeperSeenTicks++;
+			creeperMood = creeperSeenTicks >= CREEPER_LINGER_TICKS
+					? CreeperMood.LINGERING
+					: CreeperMood.PRESENT;
+		}
+		return aggro;
+	}
+
 	private static void abort(String reason) {
 		PortalGlimpse.LOGGER.info("Portal Glimpse: travel capture skipped — {}", reason);
 		finish();
@@ -282,6 +485,12 @@ public final class TravelTracker {
 
 	private static void finish() {
 		holdLoadingScreen = false;
+		wasHurt = false;
+		creeperStreak.clear();
+		creeperLastDist.clear();
+		creeperMood = CreeperMood.NONE;
+		creeperSeenTicks = 0;
+		approachingSince = 0L;
 		state = State.IDLE;
 		originId = null;
 		originDimension = null;

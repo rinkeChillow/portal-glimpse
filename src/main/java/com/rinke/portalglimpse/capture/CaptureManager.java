@@ -174,6 +174,26 @@ public final class CaptureManager {
 		finishCapture(client); // synchronous (vanilla) capture already ran, or it failed — clean up now
 	}
 
+	/**
+	 * Abandon a capture in progress and put everything back.
+	 *
+	 * <p>For when the player needs the screen NOW — taking damage on arrival. Tears down the multi-frame
+	 * shader capture if one is mid-run, un-ghosts the portal, and returns to IDLE without marking anything
+	 * captured, so the portal keeps whatever glimpse it already had rather than half of a new one.
+	 *
+	 * @return true if there was something to cancel
+	 */
+	public static boolean cancel(MinecraftClient client) {
+		if (phase == Phase.IDLE) {
+			return false;
+		}
+		if (CaptureRenderer.isActive()) {
+			CaptureRenderer.abortIncremental();
+		}
+		finishCapture(client);
+		return true;
+	}
+
 	/** Un-ghost, reset state, and notify the requester. Runs after a synchronous (vanilla) capture, after a
 	 * failure, or once a multi-frame (shader) capture completes. */
 	private static void finishCapture(MinecraftClient client) {

@@ -229,6 +229,14 @@ public final class CaptureRenderer {
 		});
 	}
 
+	/** Stop a multi-frame capture immediately, keeping nothing. Restores FOV, camera and panorama mode the
+	 * same way a completed run does — the difference is only that no further faces are grabbed. */
+	public static void abortIncremental() {
+		if (active) {
+			endIncremental();
+		}
+	}
+
 	private static void endIncremental() {
 		active = false;
 		shaderCaptureFov = 0.0F;

@@ -76,6 +76,14 @@ public final class GlimpseSettings {
 	 * the cage may be redundant). See {@code VanillaGlimpseRenderer#buildOccluders}. */
 	public static boolean godRayOccluder = true;
 
+	/** Print "Portal detected" to chat when a portal is registered. ON by default. Coordinates and block
+	 * count only ride along in {@code /pgdebug} — they are developer detail. */
+	public static boolean detectionChat = true;
+
+	/** Flash "Creeper!" when a creeper breaks a capture. A cancelled hold otherwise gives no reason at all
+	 * — the creeper is still only walking toward you, so nothing on screen explains why it dropped. */
+	public static boolean creeperWarning = true;
+
 	/** Show the little nether-portal shortcut in the pause menu, next to Advancements, that opens these
 	 * settings ({@code config/PortalMenuButton}). On by default; off for anyone who wants their pause menu
 	 * left alone, and reaches the settings through Mod Menu instead. Read when the pause menu is built. */

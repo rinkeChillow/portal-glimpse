@@ -7,6 +7,8 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gl.GlUniform;
 import net.minecraft.client.gl.ShaderProgram;
 import net.minecraft.client.gui.DrawContext;
+import com.rinke.portalglimpse.travel.TravelTracker;
+
 import net.minecraft.client.render.BufferBuilder;
 import net.minecraft.client.render.BufferRenderer;
 import net.minecraft.client.render.BuiltBuffer;
@@ -25,6 +27,21 @@ import net.minecraft.util.Identifier;
 public final class PortalLoadingBackdrop {
 
 	private static final Text LOADING_TEXT = Text.translatable("multiplayer.downloadingTerrain");
+
+	/** The creeper commentary, or null when there's nothing to say. Sits ABOVE "Loading terrain…" rather
+	 * than replacing it — the screen is still doing its normal job and should still say so.
+	 *
+	 * <p>The hold is the one moment a player is stuck watching a screen with nothing to do, and the tracker
+	 * already knows whether something green is wandering about out there. Saying so turns dead waiting time
+	 * into the only warning they get — and when the hold then breaks, they know why. */
+	private static Text creeperLine() {
+		return switch (TravelTracker.creeperMood()) {
+			case PRESENT -> Text.translatable("portal-glimpse.loading.creeperPresent");
+			case LINGERING -> Text.translatable("portal-glimpse.loading.creeperLingering");
+			case APPROACHING -> Text.translatable("portal-glimpse.loading.creeperApproaching");
+			case NONE -> null;
+		};
+	}
 	private static final Text DEBUG_HINT = Text.literal("[debug] hold — press Numpad 5 to continue");
 
 	private PortalLoadingBackdrop() {
@@ -45,7 +62,14 @@ public final class PortalLoadingBackdrop {
 		drawSwirl(client, 1.0F);
 		int cx = context.getScaledWindowWidth() / 2;
 		int cy = context.getScaledWindowHeight() / 2 - 50;
-		context.drawCenteredTextWithShadow(client.textRenderer, LOADING_TEXT, cx, cy, 0xFFFFFF);
+		// White, like every other line on this screen. Colouring it read as a mod shouting over vanilla.
+		Text creeper = creeperLine();
+		if (creeper != null) {
+			context.drawCenteredTextWithShadow(client.textRenderer, creeper, cx, cy - 6, 0xFFFFFF);
+			context.drawCenteredTextWithShadow(client.textRenderer, LOADING_TEXT, cx, cy + 6, 0xFFFFFF);
+		} else {
+			context.drawCenteredTextWithShadow(client.textRenderer, LOADING_TEXT, cx, cy, 0xFFFFFF);
+		}
 		if (PortalTransitionView.shouldHoldForDebug()) {
 			context.drawCenteredTextWithShadow(client.textRenderer, DEBUG_HINT, cx, cy + 14, 0xFFAA55);
 		}
