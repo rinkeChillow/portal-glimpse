@@ -5,6 +5,8 @@ import com.rinke.portalglimpse.ghost.GhostState;
 
 import net.fabricmc.fabric.api.client.message.v1.ClientSendMessageEvents;
 
+import com.rinke.portalglimpse.debug.McpServer;
+
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
@@ -41,6 +43,12 @@ public final class DebugCommand {
 		boolean on = !GlimpseSettings.debugMode;
 		GlimpseSettings.debugMode = on;
 		MinecraftClient client = MinecraftClient.getInstance();
+		// The MCP server exists only while debug mode does — see McpServer for why that gate matters.
+		if (on) {
+			McpServer.start();
+		} else {
+			McpServer.stop();
+		}
 		if (!on) {
 			// Leaving debug mode: undo the live debug state the (now inert) keybinds can't clear.
 			GlimpseSettings.debugBlockPortalTravel = false;
@@ -52,6 +60,10 @@ public final class DebugCommand {
 		if (client.player != null) {
 			client.player.sendMessage(Text.literal("[Portal Glimpse] Debug mode: " + (on ? "ON" : "OFF"))
 					.formatted(on ? Formatting.LIGHT_PURPLE : Formatting.GRAY), false);
+			if (on && McpServer.isRunning()) {
+				client.player.sendMessage(Text.literal("[Portal Glimpse] MCP server on 127.0.0.1:"
+						+ McpServer.port() + "/mcp").formatted(Formatting.DARK_GRAY), false);
+			}
 		}
 	}
 }
