@@ -1,54 +1,36 @@
 package com.rinke.portalglimpse.mixin;
 
 import com.rinke.portalglimpse.render.PortalEntityMask;
-import com.rinke.portalglimpse.render.PortalGlowOutline;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gl.PostEffectProcessor;
 import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.render.WorldRenderer;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.PlayerEntity;
 
-import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * The manual-capture glow ({@link PortalGlowOutline}) draws a portal-opening silhouette into the
- * entity-outline buffer, but vanilla only runs the {@code entity_outline} post-process (the glow)
- * when a real entity is glowing. This forces that post-process to run when we've emitted a glow this
- * frame, so the portal outline actually composites. Injected right after the outline buffer is drawn
- * (so our silhouette is already in the framebuffer).
+ * Hooks into the world renderer for the entity-over-panorama effect.
+ *
+ * <p><b>Dropped in the 1.21.2 port:</b> this class also used to force vanilla's {@code entity_outline}
+ * post-process to run so the manual-capture glow ({@code PortalGlowOutline}) composited, since vanilla
+ * only runs it when a real entity is glowing. It did that by shadowing WorldRenderer's
+ * {@code entityOutlinePostProcessor} and calling {@code render(tickDelta)} on it directly.
+ *
+ * <p>1.21.2 removed both. Post-effects are now scheduled through a {@code FrameGraphBuilder} —
+ * {@code PostEffectProcessor.render} takes a frame graph and a framebuffer set rather than a tick delta,
+ * and the world renderer no longer holds the processor at all; it is built on demand from
+ * {@code ShaderLoader.loadPostEffect}. Forcing it again means scheduling into that graph, which is real
+ * work for a feature that is already parked: the manual capture it serves is broken on 1.21 too, gated
+ * behind {@code /pgdebug} and disabled under shaders. The injection point itself still exists, so this is
+ * a deliberate omission rather than a dead end — see TESTING.md's parked list.
  */
 @Mixin(WorldRenderer.class)
 public abstract class WorldRendererMixin {
-
-	@Shadow
-	@Final
-	private MinecraftClient client;
-
-	@Shadow
-	private PostEffectProcessor entityOutlinePostProcessor;
-
-	@Shadow
-	protected abstract boolean canDrawEntityOutlines();
-
-	@Inject(method = "render", at = @At(value = "INVOKE",
-			target = "Lnet/minecraft/client/render/OutlineVertexConsumerProvider;draw()V",
-			shift = At.Shift.AFTER))
-	private void portalglimpse$forcePortalGlow(CallbackInfo ci) {
-		if (!PortalGlowOutline.shouldComposite() || entityOutlinePostProcessor == null
-				|| !canDrawEntityOutlines()) {
-			return;
-		}
-		entityOutlinePostProcessor.render(this.client.getRenderTickCounter().getTickDelta(true));
-		this.client.getFramebuffer().beginWrite(false);
-	}
 
 	/**
 	 * Entity-over-panorama (§ pt.14): a player standing just behind a glimpse portal's plane is skipped
@@ -64,4 +46,3 @@ public abstract class WorldRendererMixin {
 		}
 	}
 }
-

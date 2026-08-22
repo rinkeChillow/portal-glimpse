@@ -1,14 +1,6 @@
 {
-	"blend": {
-		"func": "add",
-		"srcrgb": "srcalpha",
-		"dstrgb": "1-srcalpha"
-	},
-	"vertex": "portal-glimpse:portal_panorama",
-	"fragment": "portal-glimpse:portal_panorama",
-	"attributes": [
-		"Position"
-	],
+	"vertex": "portal-glimpse:core/portal_panorama",
+	"fragment": "portal-glimpse:core/portal_panorama",
 	"samplers": [
 		{ "name": "Sampler0" },
 		{ "name": "Sampler1" },

@@ -8,6 +8,8 @@ import net.minecraft.block.BlockState;
 import net.minecraft.block.MapColor;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.Registry;
+import net.minecraft.registry.RegistryKey;
+import net.minecraft.registry.RegistryKeys;
 import net.minecraft.util.math.Direction;
 
 /**
@@ -38,8 +40,13 @@ public class OccluderBlock extends Block {
 	}
 
 	public static void register() {
-		INSTANCE = Registry.register(Registries.BLOCK, PortalGlimpse.id("occluder"),
+		// 1.21.2 derives the loot-table key from the block's own id while the block is being constructed,
+		// so the settings must already carry the registry key — building the block first now throws
+		// "Block id not set" before registration ever happens.
+		RegistryKey<Block> key = RegistryKey.of(RegistryKeys.BLOCK, PortalGlimpse.id("occluder"));
+		INSTANCE = Registry.register(Registries.BLOCK, key,
 				new OccluderBlock(AbstractBlock.Settings.create()
+						.registryKey(key)
 						.mapColor(MapColor.BLACK)
 						.nonOpaque()      // neighbours never cull against us ⇒ no leftover holes in real terrain
 						.strength(-1.0F)  // unbreakable — it is never really in the world anyway

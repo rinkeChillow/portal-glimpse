@@ -17,6 +17,7 @@ import net.minecraft.client.gui.Element;
 import net.minecraft.client.gui.Selectable;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
+import net.minecraft.client.render.RenderLayer;
 
 /**
  * A Cloth Config entry that previews the veil at the live slider value. It draws the field name on
@@ -67,7 +68,7 @@ public final class PortalPreviewEntry extends AbstractConfigListEntry<Integer> {
 		// 5×5 obsidian frame (tiled block texture; the opening is drawn over the centre 3×3).
 		for (int r = 0; r < 5; r++) {
 			for (int c = 0; c < 5; c++) {
-				ctx.drawTexture(OBSIDIAN, bx + c * CELL, by + r * CELL, CELL, CELL, 0.0F, 0.0F, 16, 16, 16, 16);
+				ctx.drawTexture(RenderLayer::getGuiTextured, OBSIDIAN, bx + c * CELL, by + r * CELL, 0.0F, 0.0F, CELL, CELL, 16, 16, 16, 16);
 			}
 		}
 
@@ -76,7 +77,7 @@ public final class PortalPreviewEntry extends AbstractConfigListEntry<Integer> {
 		int inner = 3 * CELL;
 
 		// Panorama backdrop (forward face) across the whole 3×3 opening (region == texture = full).
-		ctx.drawTexture(faces[0], ix, iy, inner, inner, 0.0F, 0.0F, 16, 16, 16, 16);
+		ctx.drawTexture(RenderLayer::getGuiTextured, faces[0], ix, iy, 0.0F, 0.0F, inner, inner, 16, 16, 16, 16);
 
 		// Swirl veil tiled 3×3 over the opening at the live opacity (one animated frame of the strip).
 		float alpha = Math.max(0, Math.min(100, percent.getAsInt())) / 100.0F;
@@ -87,8 +88,8 @@ public final class PortalPreviewEntry extends AbstractConfigListEntry<Integer> {
 			RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, alpha);
 			for (int r = 0; r < 3; r++) {
 				for (int c = 0; c < 3; c++) {
-					ctx.drawTexture(SWIRL, ix + c * CELL, iy + r * CELL, CELL, CELL,
-							0.0F, frame * 16.0F, 16, 16, 16, 512);
+					ctx.drawTexture(RenderLayer::getGuiTextured, SWIRL, ix + c * CELL, iy + r * CELL, 0.0F, frame * 16.0F,
+							CELL, CELL, 16, 16, 16, 512);
 				}
 			}
 			RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);

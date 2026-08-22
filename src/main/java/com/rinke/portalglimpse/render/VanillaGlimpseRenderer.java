@@ -59,6 +59,8 @@ import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
+import com.mojang.blaze3d.systems.ProjectionType;
+import net.minecraft.client.gl.ShaderProgramKeys;
 
 /**
  * Default glimpse renderer built on vanilla rendering (design doc §7 strategy "B leaning C").
@@ -858,12 +860,11 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		// frame's exact view on the stack (composite left ortho matrices behind), draw, restore.
 		client.getFramebuffer().beginWrite(false);
 		RenderSystem.backupProjectionMatrix();
-		RenderSystem.setProjectionMatrix(projection, RenderSystem.getVertexSorting());
+		RenderSystem.setProjectionMatrix(projection, ProjectionType.PERSPECTIVE);
 		Matrix4fStack modelView = RenderSystem.getModelViewStack();
 		modelView.pushMatrix();
 		modelView.identity();
 		modelView.mul(view);
-		RenderSystem.applyModelViewMatrix();
 
 		renderPanoramas(IDENTITY, store, cam, panos, false); // view already on the stack; identity world-pose
 		drawShaderPostcards(client, cam, panos);      // the flat postcard, over the panorama (the shader floor)
@@ -872,7 +873,6 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		}
 
 		modelView.popMatrix();
-		RenderSystem.applyModelViewMatrix();
 		RenderSystem.restoreProjectionMatrix();
 	}
 
@@ -972,9 +972,9 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		int w = main.textureWidth;
 		int h = main.textureHeight;
 		if (rttFbo == null) {
-			rttFbo = new SimpleFramebuffer(w, h, true, MinecraftClient.IS_SYSTEM_MAC);
+			rttFbo = new SimpleFramebuffer(w, h, true);
 		} else if (rttFbo.textureWidth != w || rttFbo.textureHeight != h) {
-			rttFbo.resize(w, h, MinecraftClient.IS_SYSTEM_MAC);
+			rttFbo.resize(w, h);
 		}
 		if (!rttTexRegistered) {
 			client.getTextureManager().registerTexture(RTT_TEX_ID, new FboWrapTexture(rttFbo));
@@ -986,15 +986,14 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		} else {
 			rttFbo.setClearColor(0.0F, 0.0F, 0.0F, 0.0F);
 		}
-		rttFbo.clear(MinecraftClient.IS_SYSTEM_MAC);
+		rttFbo.clear();
 		rttFbo.beginWrite(true);
 		RenderSystem.backupProjectionMatrix();
-		RenderSystem.setProjectionMatrix(projection, RenderSystem.getVertexSorting());
+		RenderSystem.setProjectionMatrix(projection, ProjectionType.PERSPECTIVE);
 		Matrix4fStack modelView = RenderSystem.getModelViewStack();
 		modelView.pushMatrix();
 		modelView.identity();
 		modelView.mul(view);
-		RenderSystem.applyModelViewMatrix();
 		// The offscreen buffer has no scene geometry to occlude against, and its cleared depth value need not
 		// match the pipeline's depth convention (Iris may use reversed-Z) — so force the depth test to ALWAYS
 		// pass. Otherwise every panorama fragment is rejected against the cleared depth and the FBO stays empty
@@ -1004,7 +1003,6 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		renderPanoramas(IDENTITY, store, cam, drawables, true); // RTT: dissolve the fade (opaque gbuffer)
 		RenderSystem.depthFunc(GL11.GL_LEQUAL);
 		modelView.popMatrix();
-		RenderSystem.applyModelViewMatrix();
 		RenderSystem.restoreProjectionMatrix();
 		main.beginWrite(false); // back to the main framebuffer
 		if (GlimpseSettings.debugRttBlit) {
@@ -1376,9 +1374,8 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			double x = MathHelper.lerp((double) tickDelta, player.lastRenderX, player.getX()) - cameraPos.x;
 			double y = MathHelper.lerp((double) tickDelta, player.lastRenderY, player.getY()) - cameraPos.y;
 			double z = MathHelper.lerp((double) tickDelta, player.lastRenderZ, player.getZ()) - cameraPos.z;
-			float yaw = MathHelper.lerp(tickDelta, player.prevYaw, player.getYaw());
 			int light = dispatcher.getLight(player, tickDelta);
-			dispatcher.render(player, x, y, z, yaw, tickDelta, matrices, immediate, light);
+			dispatcher.render(player, x, y, z, tickDelta, matrices, immediate, light);
 			immediate.draw();
 		}
 	}
@@ -1492,14 +1489,13 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		Matrix4fStack modelView = RenderSystem.getModelViewStack();
 		modelView.pushMatrix();
 		modelView.mul(worldPose);
-		RenderSystem.applyModelViewMatrix();
 
 		RenderSystem.enableBlend();
 		RenderSystem.defaultBlendFunc();
 		RenderSystem.enableDepthTest();
 		RenderSystem.depthMask(true);
 		RenderSystem.disableCull();
-		RenderSystem.setShader(PortalShaders::panorama);
+		RenderSystem.setShader(PortalShaders.panorama());
 
 		GlUniform alpha = shader.getUniform("GlimpseAlpha");
 		GlUniform center = shader.getUniform("PortalCenter");
@@ -1616,7 +1612,7 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 			}
 		}
 		if (anyCage) {
-			RenderSystem.setShader(GameRenderer::getPositionProgram);
+			RenderSystem.setShader(ShaderProgramKeys.POSITION);
 			RenderSystem.colorMask(false, false, false, false);
 			RenderSystem.depthMask(true);
 			for (PanoDraw pano : panos) {
@@ -1639,7 +1635,6 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 		RenderSystem.depthMask(true); // restore for the later passes (a portal above may have cleared it)
 		RenderSystem.enableCull();
 		modelView.popMatrix();
-		RenderSystem.applyModelViewMatrix();
 	}
 
 	/**

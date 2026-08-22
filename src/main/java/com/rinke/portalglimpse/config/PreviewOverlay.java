@@ -13,6 +13,7 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
+import net.minecraft.client.render.RenderLayer;
 
 /**
  * The maximized portal preview, drawn as an OVERLAY on top of the still-rendering config screen
@@ -152,7 +153,7 @@ public final class PreviewOverlay {
 		// 5×5 obsidian frame.
 		for (int r = 0; r < 5; r++) {
 			for (int c = 0; c < 5; c++) {
-				ctx.drawTexture(OBSIDIAN, bx + c * cell, by + r * cell, cell, cell, 0.0F, 0.0F, 16, 16, 16, 16);
+				ctx.drawTexture(RenderLayer::getGuiTextured, OBSIDIAN, bx + c * cell, by + r * cell, 0.0F, 0.0F, cell, cell, 16, 16, 16, 16);
 			}
 		}
 
@@ -164,7 +165,7 @@ public final class PreviewOverlay {
 		for (int k = -1; k <= n; k++) {
 			int fx = ix + k * inner - (int) off;
 			Identifier face = faces[((k % n) + n) % n];
-			ctx.drawTexture(face, fx, iy, inner, inner, 0.0F, 0.0F, 16, 16, 16, 16);
+			ctx.drawTexture(RenderLayer::getGuiTextured, face, fx, iy, 0.0F, 0.0F, inner, inner, 16, 16, 16, 16);
 		}
 		ctx.disableScissor();
 
@@ -176,8 +177,8 @@ public final class PreviewOverlay {
 			RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, alpha);
 			for (int r = 0; r < 3; r++) {
 				for (int c = 0; c < 3; c++) {
-					ctx.drawTexture(SWIRL, ix + c * cell, iy + r * cell, cell, cell,
-							0.0F, frame * 16.0F, 16, 16, 16, 512);
+					ctx.drawTexture(RenderLayer::getGuiTextured, SWIRL, ix + c * cell, iy + r * cell, 0.0F, frame * 16.0F,
+							cell, cell, 16, 16, 16, 512);
 				}
 			}
 			RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);

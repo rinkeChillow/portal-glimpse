@@ -72,14 +72,13 @@ public final class CaptureRenderer {
 		boolean wide = IrisCompat.shadersActive();
 		int captureRes = wide ? Math.round(resolution / cropFraction()) : resolution;
 		SimpleFramebuffer framebuffer =
-				new SimpleFramebuffer(captureRes, captureRes, true, MinecraftClient.IS_SYSTEM_MAC);
+				new SimpleFramebuffer(captureRes, captureRes, true);
 
 		client.gameRenderer.setBlockOutlineEnabled(false);
 		client.gameRenderer.setRenderingPanorama(true);
 		shaderCaptureFov = wide ? CAPTURE_FOV_SHADER : 0.0F;
 		window.setFramebufferWidth(captureRes);
 		window.setFramebufferHeight(captureRes);
-		client.worldRenderer.reloadTransparencyPostProcessor();
 
 		// Point the client's MAIN framebuffer at our capture target for the shots: Iris composites the
 		// shaded world into MinecraftClient.getFramebuffer() (not whatever we merely bind), so without this
@@ -101,7 +100,7 @@ public final class CaptureRenderer {
 				// (disabling TAA didn't stop it, and re-rendering can't overwrite pixels this face doesn't draw).
 				// Then re-render a few times so any INTERNAL temporal buffers also settle onto this face.
 				framebuffer.setClearColor(0.0F, 0.0F, 0.0F, 1.0F);
-				framebuffer.clear(MinecraftClient.IS_SYSTEM_MAC);
+				framebuffer.clear();
 				int renders = wide ? SHADER_SETTLE_RENDERS + 1 : 1;
 				for (int i = 0; i < renders; i++) {
 					framebuffer.beginWrite(true);
@@ -133,8 +132,7 @@ public final class CaptureRenderer {
 			client.gameRenderer.setBlockOutlineEnabled(true);
 			window.setFramebufferWidth(prevWidth);
 			window.setFramebufferHeight(prevHeight);
-			client.worldRenderer.reloadTransparencyPostProcessor();
-			client.getFramebuffer().beginWrite(true);
+				client.getFramebuffer().beginWrite(true);
 		}
 	}
 
@@ -256,7 +254,7 @@ public final class CaptureRenderer {
 		NativeImage dst = new NativeImage(side, side, false);
 		for (int y = 0; y < side; y++) {
 			for (int x = 0; x < side; x++) {
-				dst.setColor(x, y, src.getColor(offX + x, offY + y));
+				dst.setColorArgb(x, y, src.getColorArgb(offX + x, offY + y));
 			}
 		}
 		return dst;

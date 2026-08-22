@@ -17,6 +17,7 @@ import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.Util;
 import net.minecraft.util.math.MathHelper;
+import net.minecraft.client.render.RenderLayer;
 
 /**
  * The in-your-face prompt shown when the player is running the RTT glimpse on a shaderpack we have no
@@ -216,7 +217,7 @@ public class UnsupportedShaderScreen extends Screen {
 				float alpha = t * t * (3.0F - 2.0F * t); // smoothstep — eases in and settles instead of ramping
 				RenderSystem.enableBlend();
 				RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, alpha);
-				context.drawTexture(AVATAR, cx - AVATAR_SIZE / 2, y, 0.0F, 0.0F,
+				context.drawTexture(RenderLayer::getGuiTextured, AVATAR, cx - AVATAR_SIZE / 2, y, 0.0F, 0.0F,
 						AVATAR_SIZE, AVATAR_SIZE, AVATAR_SIZE, AVATAR_SIZE);
 				RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F); // never leak the tint into later draws
 				RenderSystem.disableBlend();

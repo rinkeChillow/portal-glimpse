@@ -113,7 +113,7 @@ public final class BlockFamilies {
 			if (path.endsWith(suffix)) {
 				String base = path.substring(0, path.length() - suffix.length());
 				Identifier plankId = Identifier.of(id.getNamespace(), base + "_planks");
-				Block plank = Registries.BLOCK.getOrEmpty(plankId).orElse(null);
+				Block plank = Registries.BLOCK.getOptionalValue(plankId).orElse(null);
 				if (plank != null) {
 					return plank;
 				}

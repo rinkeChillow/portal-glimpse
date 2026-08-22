@@ -98,7 +98,7 @@ public final class PortalLoadingBackdrop {
 		for (int i = 0; i < 6; i++) {
 			RenderSystem.setShaderTexture(i, faces[i]);
 		}
-		RenderSystem.setShader(PortalShaders::loading);
+		RenderSystem.setShader(PortalShaders.loading());
 
 		float[] f = PortalTransitionView.forward();
 		float[] r = PortalTransitionView.right();
@@ -169,7 +169,7 @@ public final class PortalLoadingBackdrop {
 		RenderSystem.disableDepthTest();
 		RenderSystem.depthMask(false);
 		RenderSystem.setShaderTexture(0, sprite.getAtlasId());
-		RenderSystem.setShader(PortalShaders::swirl);
+		RenderSystem.setShader(PortalShaders.swirl());
 
 		setVec2(shader, "SpriteMin", sprite.getMinU(), sprite.getMinV());
 		setVec2(shader, "SpriteMax", sprite.getMaxU(), sprite.getMaxV());

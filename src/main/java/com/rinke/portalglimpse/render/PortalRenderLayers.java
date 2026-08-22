@@ -8,6 +8,7 @@ import net.minecraft.client.render.VertexFormat;
 import net.minecraft.client.render.VertexFormats;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.Util;
+import net.minecraft.util.TriState;
 
 /**
  * The RTT glimpse's own render layer — a combination vanilla doesn't ship, assembled from vanilla phases
@@ -71,7 +72,7 @@ public final class PortalRenderLayers {
 				true,  // translucent: sorts with the transparent geometry
 				RenderLayer.MultiPhaseParameters.builder()
 						.program(RenderPhase.BEACON_BEAM_PROGRAM)
-						.texture(new RenderPhase.Texture(texture, false, false))
+						.texture(new RenderPhase.Texture(texture, TriState.FALSE, false))
 						.transparency(RenderPhase.TRANSLUCENT_TRANSPARENCY)
 						.writeMaskState(writeMask)
 						.depthTest(RenderPhase.LEQUAL_DEPTH_TEST)

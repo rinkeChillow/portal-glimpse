@@ -194,6 +194,11 @@ that line. Expect nothing below this subsection to be runnable until the port co
 Kept here so a future version bump doesn't mistake them for regressions.
 
 - **Manual capture (ctrl+shift+right-click)** — broken. Behind `/pgdebug`, and disabled under shaders.
+- **Manual-capture glow outline — dropped in the 1.21.2 port.** `WorldRendererMixin` used to force
+  vanilla's `entity_outline` post-process so the portal silhouette composited. 1.21.2 moved post-effects
+  into a `FrameGraphBuilder` and the world renderer no longer holds the processor, so forcing it means
+  scheduling into that graph. Left out because the manual capture it serves is parked anyway. The
+  injection point still exists, so this is reversible.
 - **Solas edge creases** — its AO is derived from `depthtex0` alone with no material input, so no
   render-program or material trick can opt out. Ships as PARTIAL with a caveat.
 - **Cubemap face seams under shaders** — per-face auto-exposure drift, not dimension hue. Ghost-free and

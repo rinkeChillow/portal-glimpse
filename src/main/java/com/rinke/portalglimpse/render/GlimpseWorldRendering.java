@@ -14,7 +14,6 @@ public final class GlimpseWorldRendering {
 	}
 
 	public static void register() {
-		PortalShaders.register();
 		WorldRenderEvents.AFTER_TRANSLUCENT.register(context -> GlimpseRenderers.get().renderWorld(context));
 		// The Iris-shader overlay (renderAfterShaders) is driven by SodiumIrisPipelineMixin instead of a
 		// WorldRenderEvent, because it must run AFTER Iris's composite — later than any Fabric world event.

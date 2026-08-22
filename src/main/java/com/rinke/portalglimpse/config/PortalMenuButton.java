@@ -12,6 +12,7 @@ import com.rinke.portalglimpse.render.GlimpseSettings;
 import org.lwjgl.glfw.GLFW;
 
 import net.minecraft.text.Text;
+import net.minecraft.client.render.RenderLayer;
 
 /**
  * A little nether portal in the pause menu that opens Portal Glimpse's settings.
@@ -142,10 +143,11 @@ public class PortalMenuButton extends ClickableWidget {
 				// Every cell is CELL x CELL, frame and veil alike, so they line up exactly.
 				boolean inside = col >= 1 && col <= 2 && row >= 1 && row <= 3;
 				if (inside) {
-					context.drawSprite(px, py, 0, CELL, CELL, portal, glow, glow, glow, 1.0F);
+					context.drawSpriteStretched(RenderLayer::getGuiTextured, portal, px, py, CELL, CELL,
+							tint(glow));
 				} else {
-					context.drawSprite(px, py, 0, CELL, CELL, obsidian,
-							lit ? 1.0F : 0.85F, lit ? 1.0F : 0.85F, lit ? 1.0F : 0.85F, 1.0F);
+					context.drawSpriteStretched(RenderLayer::getGuiTextured, obsidian, px, py, CELL, CELL,
+							tint(lit ? 1.0F : 0.85F));
 				}
 			}
 		}
@@ -159,4 +161,11 @@ public class PortalMenuButton extends ClickableWidget {
 	protected void appendClickableNarrations(NarrationMessageBuilder builder) {
 		appendDefaultNarrations(builder);
 	}
+
+	/** Packs a white tint at the given brightness into the ARGB int 1.21.2's sprite draws take. */
+	private static int tint(float brightness) {
+		int c = (int) (brightness * 255.0F);
+		return 0xFF000000 | (c << 16) | (c << 8) | c;
+	}
+
 }
