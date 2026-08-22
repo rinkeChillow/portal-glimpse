@@ -14,6 +14,31 @@ Every item is written as **do this → expect that**. If the "expect" doesn't ha
 
 These have all bitten this project before. A clean build says nothing about any of them.
 
+### 1a. If the MINECRAFT version changed
+
+Anything past 1.21.1 is a **port, not a bump** — the render stack this mod is built on is replaced above
+that line. Expect nothing below this subsection to be runnable until the port compiles again.
+
+- [ ] Bump these together in `gradle.properties`: `minecraft_version`, `yarn_mappings`, `loader_version`,
+      `fabric_api_version`, `cloth_config_version`, `modmenu_version`.
+      *Mismatched yarn against minecraft_version fails in a way that reads like your code is wrong.*
+- [ ] **Widen `"minecraft"` in `fabric.mod.json`.** It is pinned to `>=1.21 <=1.21.1`.
+      *Forget this one and the jar refuses to load on the very version you just built it for.*
+- [ ] Re-check the access widener against the new mappings: `RenderLayer.of` by exact descriptor, plus
+      eight `RenderPhase` fields. *`RenderPhase` is the piece most likely to be gone outright.*
+- [ ] The three core shader programs in `assets/portal-glimpse/shaders/core/` still compile and link.
+      *Vanilla's core-shader format and uniform set move between versions. A broken one draws pink or
+      black and the only evidence is a log line, not an error on screen.*
+- [ ] Every Fabric API hook still exists with the same signature — `WorldRenderEvents` /
+      `WorldRenderContext` (incl. `context.frustum()`), `CoreShaderRegistrationCallback`, `HudRenderCallback`,
+      the `ScreenEvents` trio, `ClientChunkEvents`, `ClientSendMessageEvents`.
+- [ ] All 13 mixin targets still exist and still match. *Vanilla renderer classes get refactored hardest;
+      `IrisPipelineMixin` and `SodiumLevelSliceMixin` are `@Pseudo` and fail silently.*
+- [ ] **Captures written by the PREVIOUS version still load** — old glimpses survive the upgrade.
+      *People update with a full capture folder. Do not strand it.*
+
+### 1b. Every release
+
 - [ ] `build/classes/java/main/portalglimpse.mixins.refmap.json` exists and is non-empty.
       *Missing refmap = mixins silently never fire. No crash, no warning, hooks just don't run.*
 - [ ] Every class listed in `portalglimpse.mixins.json` exists in the jar.
@@ -58,6 +83,9 @@ These have all bitten this project before. A clean build says nothing about any 
 - [ ] Look at the portal from a sharp angle → still reads as depth, not a flat sticker.
 - [ ] The swirl renders **over** the glimpse, not under it.
 - [ ] Only the face toward you draws — the far side doesn't shine through.
+- [ ] Eight-plus captured portals in view at once → no frame-time cliff.
+      *Nearest-N, frustum culling and the cached interior bbox all exist to stop this. Nothing
+      else in this list would notice if they stopped working.*
 - [ ] Build a **non-rectangular** portal (an L or a plus) → glimpse fills the actual shape.
 - [ ] Build a **wide** portal (10+) → image covers it without stretching or distortion.
 - [ ] Stand so clouds/rain are behind the portal → they're occluded, not drawn over it.
@@ -154,6 +182,8 @@ These have all bitten this project before. A clean build says nothing about any 
 - [ ] `/pgdebug` **off** by default — it gates the debug keys, manual capture, and the MCP server.
 - [ ] MCP server is NOT listening when debug is off (`curl 127.0.0.1:25585/mcp` refuses).
 - [ ] `mod_version` bumped in `gradle.properties`.
+- [ ] The `"minecraft"` range in `fabric.mod.json` matches the versions you actually tested —
+      no wider, no narrower.
 - [ ] Modrinth AI disclosure still accurate for anything added this release.
 - [ ] Known-broken items are disclosed, not hidden.
 
