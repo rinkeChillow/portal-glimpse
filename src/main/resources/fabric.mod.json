@@ -34,10 +34,10 @@
 	"accessWidener": "portal-glimpse.accesswidener",
 	"depends": {
 		"fabricloader": ">=0.19.3",
-		"minecraft": "1.21.3",
+		"minecraft": "1.21.4",
 		"java": ">=21",
 		"fabric-api": "*",
-		"cloth-config": ">=16.0.0"
+		"cloth-config": ">=17.0.0"
 	},
 	"suggests": {
 		"modmenu": "*"

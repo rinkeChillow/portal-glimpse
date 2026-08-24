@@ -2,7 +2,6 @@ package com.rinke.portalglimpse.render;
 
 import net.minecraft.client.gl.Framebuffer;
 import net.minecraft.client.texture.AbstractTexture;
-import net.minecraft.resource.ResourceManager;
 
 /**
  * A {@link net.minecraft.client.texture.Texture} whose GL id IS a framebuffer's colour attachment, so
@@ -20,10 +19,6 @@ public final class FboWrapTexture extends AbstractTexture {
 	@Override
 	public int getGlId() {
 		return fbo.getColorAttachment();
-	}
-
-	@Override
-	public void load(ResourceManager manager) {
 	}
 
 	@Override

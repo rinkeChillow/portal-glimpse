@@ -29,7 +29,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(BillboardParticle.class)
 public class BillboardParticleMixin {
 
-	@Inject(method = "buildGeometry", at = @At("HEAD"), cancellable = true)
+	@Inject(method = "render", at = @At("HEAD"), cancellable = true)
 	private void portalglimpse$hidePortalParticles(VertexConsumer vertexConsumer, Camera camera, float tickDelta,
 			CallbackInfo ci) {
 		if (GhostState.isActive() && (Object) this instanceof PortalParticle) {
