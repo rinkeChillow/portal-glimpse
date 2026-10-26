@@ -237,6 +237,21 @@ public class VanillaGlimpseRenderer implements GlimpseRenderer {
 
 	@Override
 	public void renderWorld(WorldRenderContext context) {
+		try {
+			renderWorldFrame(context);
+		} finally {
+			// A player that PortalEntityMask deferred has already been CANCELLED from vanilla's entity pass, so
+			// they must be drawn before the frame ends whatever path renderWorldFrame took. It used to happen only
+			// at the very end of the vanilla path, which several early returns skip — e.g. when the only portal in
+			// view is dropped this frame because its capture texture has not loaded yet, or the arrival gate
+			// suppressed it. That player was invisible, and since nothing drained the list it grew every frame,
+			// then re-drew them once per frame missed. consume() empties the list, so on the normal path (which
+			// already drew them at the right point in the overlay order) this second call does nothing.
+			renderNearPlayers(context, context.camera().getPos());
+		}
+	}
+
+	private void renderWorldFrame(WorldRenderContext context) {
 		deferredPanos = null; // reset the shader stashes each frame (set below only under shaders)
 		rttDrawables = null;
 		panoramaSet = java.util.Collections.emptySet(); // recomputed after the frustum cull below

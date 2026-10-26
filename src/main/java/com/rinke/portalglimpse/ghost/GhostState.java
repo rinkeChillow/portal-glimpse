@@ -1,7 +1,10 @@
 package com.rinke.portalglimpse.ghost;
 
-import java.util.Collections;
 import java.util.Map;
+
+import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectMaps;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 
 import net.minecraft.block.BlockState;
 import net.minecraft.util.math.BlockPos;
@@ -16,13 +19,14 @@ import net.minecraft.util.math.BlockPos;
  * of punching a hole (see {@code GhostController.computeHiddenBlocks}).
  *
  * <p>Read from chunk-builder worker threads (the render mixins) and written from the client
- * thread, so both fields are {@code volatile} and {@link #replacements} is always replaced with an
- * immutable snapshot rather than mutated in place.
+ * thread, so both fields are {@code volatile} and {@link #replacements} is always replaced with a
+ * snapshot built in full and never mutated afterwards. It is primitive-keyed so the mesher's per-block
+ * lookup never boxes a {@code Long}.
  */
 public final class GhostState {
 
 	private static volatile boolean active = false;
-	private static volatile Map<Long, BlockState> replacements = Collections.emptyMap();
+	private static volatile Long2ObjectMap<BlockState> replacements = Long2ObjectMaps.emptyMap();
 
 	private GhostState() {
 	}
@@ -54,12 +58,12 @@ public final class GhostState {
 
 	/** Activate ghosting; each position maps to the state it should mesh as (an immutable snapshot is taken). */
 	public static void set(Map<Long, BlockState> hiddenReplacements) {
-		replacements = Map.copyOf(hiddenReplacements);
+		replacements = new Long2ObjectOpenHashMap<>(hiddenReplacements);
 		active = true;
 	}
 
 	public static void clear() {
 		active = false;
-		replacements = Collections.emptyMap();
+		replacements = Long2ObjectMaps.emptyMap();
 	}
 }

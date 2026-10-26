@@ -140,7 +140,11 @@ public final class PortalEntityMask {
 				continue;
 			}
 
-			collected.add(new NearPlayer(player, record.id));
+			// Guarded so a second renderEntity call for the same player in one frame cannot queue a second
+			// re-render of them.
+			if (!isCollected(player)) {
+				collected.add(new NearPlayer(player, record.id));
+			}
 			if (debug) {
 				debugDecision = name + ": DEFERRED (re-rendered over the panorama)";
 			}
@@ -149,6 +153,15 @@ public final class PortalEntityMask {
 		if (debug && capturedInDim == 0) {
 			debugDecision = (name != null ? name : "player")
 					+ ": NOT deferred — the observer has NO captured portal in this dimension (hasCapture=false)";
+		}
+		return false;
+	}
+
+	private static boolean isCollected(PlayerEntity player) {
+		for (NearPlayer np : collected) {
+			if (np.player() == player) {
+				return true;
+			}
 		}
 		return false;
 	}

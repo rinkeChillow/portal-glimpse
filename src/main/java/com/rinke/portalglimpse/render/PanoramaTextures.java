@@ -68,18 +68,28 @@ public final class PanoramaTextures {
 		LOADING.remove(id);
 		destroy(client, CACHE.remove(id));
 
-		Identifier[] faces = new Identifier[6];
-		int loaded = 0;
-		for (int i = 0; i < 6; i++) {
-			if (images[i] != null) {
-				Identifier textureId = Identifier.of(PortalGlimpse.MOD_ID, "panorama/" + id + "/" + i);
-				client.getTextureManager().registerTexture(textureId, new NativeImageBackedTexture(images[i]));
-				faces[i] = textureId;
-				loaded++;
+		// The parallax shader samples all six faces, so only a complete cubemap is usable. Check that BEFORE
+		// registering anything: registering the faces that did load and then caching null — as this used to —
+		// orphaned them in the texture manager, because destroy() only frees what the cache entry holds. A
+		// partial set (an interrupted capture, a face deleted by hand) leaked GPU memory on every reload.
+		for (NativeImage image : images) {
+			if (image == null) {
+				for (NativeImage other : images) {
+					if (other != null) {
+						other.close();
+					}
+				}
+				CACHE.put(id, new Entry(null, version));
+				return;
 			}
 		}
-		// The parallax shader samples all six faces — only expose a complete cubemap.
-		CACHE.put(id, new Entry(loaded == 6 ? faces : null, version));
+		Identifier[] faces = new Identifier[6];
+		for (int i = 0; i < 6; i++) {
+			Identifier textureId = Identifier.of(PortalGlimpse.MOD_ID, "panorama/" + id + "/" + i);
+			client.getTextureManager().registerTexture(textureId, new NativeImageBackedTexture(images[i]));
+			faces[i] = textureId;
+		}
+		CACHE.put(id, new Entry(faces, version));
 	}
 
 	private static NativeImage tryRead(Path file) {
